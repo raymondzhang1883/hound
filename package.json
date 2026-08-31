@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test apps/fixture/tests/*.test.ts",
+    "test": "tsx --test apps/fixture/tests/*.test.ts services/runtime/tests/*.test.ts",
     "setup:browser": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright install chromium",
     "test:browser": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test",
     "check": "npm run typecheck && npm test && npm run test:browser",
