@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** a local fixture, isolated browser runtime, deterministic write verification, fresh-state paired replay, and a bounded simple-agent loop with an OpenAI adapter. The original naive policy failed to reach a write probe; the separately versioned simple causal baseline then discovered the seeded regression, reproduced it on fresh candidate state, and observed a fresh baseline denial. The complete v1 pilot remains preserved. Cumulative estimated model cost was $0.532229. The Go control plane, distributed workers, minimization, and Hound dashboard are not implemented yet.
+**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. See the causal pilot and minimization record. Cumulative estimated model cost remains $0.532229; minimization and export added no model calls. The Go control plane, distributed workers, and Hound dashboard are not implemented yet.
 
 ## The first regression
 
@@ -77,6 +77,18 @@ npm run hunt -- --case negative --max-cost-usd 1
 
 Each command has a separate estimated spend allowance; the example allocates $2 across the two pilots. Costs depend on actual tokens. No automatic provider retries or model fallback occur. Each run creates its own loopback fixtures and private records under `.hound/runs/`; it does not borrow the interactive demo. A nondetection is never called a security pass. See the agent setup and results guide before running a paid pilot.
 
+## Minimize and export a finding
+
+Use the run ID of a verified `candidate_only_violation` result. The command uses fresh owned loopback fixture pairs and Chromium; it does not load `.env` or call a model.
+
+```sh
+npm run minimize -- --run-id <positive-run-id>
+npm run test:generated
+HOUND_FIXTURE_MODE=stale-write npm run test:generated
+```
+
+The first test command should pass. The explicit seeded-candidate command should fail with `Expected: "denied"` and `Received: "violation"`. A successful minimization writes its private journal under `.hound/minimizations/` and exports [the generated regression](generated-tests/removed-member-write.spec.ts). Export requires a deletion-minimal result and three successful confirmation pairs by default. See the minimizer and exporter guide for the algorithm, evidence, and claim limits.
+
 ## Tests and evidence
 
 ```sh
@@ -91,7 +103,7 @@ The state and HTTP tests cover the seeded behavior, session/workspace isolation,
 
 Browser tests exercise the real UI as Alice and Bob, check the server's membership state and persisted body/revision, verify fresh-session denial, and check the small-screen layout. They use fresh instances and contexts on each run and do not disturb the interactive demo. The candidate test **passes when the expected seeded bug is observed**; this suite validates the benchmark target.
 
-`npm run test:runtime` exercises the same fixture through Hound's decision executor, records an authored trajectory, and replays it with new sessions and resource IDs. It checks candidate-only, both-correct, and both-buggy outcomes, plus invalid decisions, lost sessions, closed browsers, deadlines, cleanup, and local traffic restrictions. This demonstrates execution and verification without a model API key. It does **not** demonstrate autonomous discovery. See the runtime guide for its interface and limitations.
+`npm run test:runtime` exercises the same fixture through Hound's decision executor, records an authored trajectory, and replays it with new sessions and resource IDs. It checks candidate-only, both-correct, and both-buggy outcomes, plus invalid decisions, lost sessions, closed browsers, deadlines, cleanup, and local traffic restrictions. This demonstrates execution and verification without a model API key. It does **not** demonstrate autonomous discovery. `npm run test:generated` runs the exported regression against the correct fixture. See the runtime guide for its interface and limitations.
 
 After browser tests, `test-results/` contains post-login screenshots and selected JSON evidence; `playwright-report/` contains the HTML report. View it with:
 
@@ -118,14 +130,16 @@ apps/fixture/
   scripts/         Two-process local demo launcher
   tests/           State, HTTP, and Playwright acceptance checks
 services/runtime/
-  src/             Browser execution, oracle/replay, provider policy, controller, journal
-  scripts/         Bounded local agent pilot CLI
+  src/             Browser execution, oracle/replay, minimizer/exporter, provider policy, controller, journal
+  scripts/         Bounded local agent and minimizer CLIs
   tests/           Pure checks and local browser integration tests
+generated-tests/   Model-free Playwright regressions emitted from confirmed plans
   project-brief.md  Product direction and phased build brief
   fixture.md       How to run, reset, and integrate the benchmark target
   runtime.md       Deterministic runtime interface, completion, and failure semantics
   agent.md         Model setup, pilot budgets, private run records, and outcomes
+  minimization.md  Paired reduction, export workflow, evidence, and limits
   design-decisions/
 ```
 
-The browser contract, provider integration, and simple causal baseline are implemented following an adversarial review. The next design checkpoint is deterministic plan minimization and Playwright-test export using the verified v2 trajectory. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+The browser contract, provider integration, simple causal baseline, and paired minimizer/exporter are implemented following an adversarial review. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
