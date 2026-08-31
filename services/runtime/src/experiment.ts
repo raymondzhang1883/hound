@@ -178,13 +178,15 @@ export class BrowserExperiment {
   async replay(plan: ReplayPlan): Promise<ReplayConclusion> {
     const conclusion: ReplayConclusion = { planId: plan.id, probeStep: plan.steps.length - 1, actor: plan.probeActor,
       resourceRef: plan.probeResource, setupEquivalent: false, result: 'inconclusive' };
+    const failed = (reason: string, failedStep?: number): ReplayConclusion => ({ ...conclusion, reason, ...(failedStep === undefined ? {} : { failedStep }) });
     const { id, ...data } = plan;
-    if (plan.version !== 1 || planHash(data) !== id || !plan.steps.length || this.records.length || plan.steps.length > 120) return conclusion;
+    if (plan.version !== 1 || planHash(data) !== id || !plan.steps.length || plan.steps.length > 120) return failed('invalid_replay_plan');
+    if (this.records.length) return failed('replay_requires_fresh_execution');
     for (let index = 0; index < plan.steps.length; index++) {
       const record = plan.steps[index]!;
       const action = record.action;
       const view = this.views.get(action.actor);
-      if (!view) return conclusion;
+      if (!view) return failed('unknown_actor', index);
       let decision: Decision;
       try {
         if ('recipe' in action) {
@@ -194,20 +196,20 @@ export class BrowserExperiment {
           // Recipes are trusted runtime records, never part of a policy action's schema.
           delete (decision as unknown as Record<string, unknown>).recipe;
         } else decision = { version: 1, ...action };
-      } catch { return conclusion; }
+      } catch (error) { return failed(error instanceof ContractError ? error.code : 'replay_observation_failed', index); }
       const result = await this.step(decision);
-      if (result.status !== 'executed') return conclusion;
+      if (result.status !== 'executed') return failed(result.code, index);
       const actual = this.records[index]!;
-      if (canonical(actual.before) !== canonical(record.before)) return conclusion;
+      if (canonical(actual.before) !== canonical(record.before)) return failed('replay_precondition_mismatch', index);
       if (index < plan.steps.length - 1) {
-        if (canonical(actual.after) !== canonical(record.after) || canonical(actual.http) !== canonical(record.http)) return conclusion;
+        if (canonical(actual.after) !== canonical(record.after) || canonical(actual.http) !== canonical(record.http)) return failed('replay_setup_mismatch', index);
       } else {
-        if (result.verdict.kind !== 'denied' && result.verdict.kind !== 'violation') return conclusion;
-        if (this.bindings.ref(result.verdict.documentId) !== plan.probeResource || result.verdict.actor !== plan.probeActor) return conclusion;
+        if (result.verdict.kind !== 'denied' && result.verdict.kind !== 'violation') return failed('replay_probe_missing', index);
+        if (this.bindings.ref(result.verdict.documentId) !== plan.probeResource || result.verdict.actor !== plan.probeActor) return failed('replay_probe_mismatch', index);
         return { ...conclusion, setupEquivalent: true, result: result.verdict.kind };
       }
     }
-    return conclusion;
+    return failed('replay_probe_missing');
   }
 
   close(): Promise<void> {

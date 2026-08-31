@@ -91,6 +91,8 @@ export class RemovedMemberWriteOracle {
 export interface ReplayConclusion {
   planId: string; probeStep: number; actor: Actor; resourceRef: string; setupEquivalent: boolean;
   result: Verdict['kind'];
+  reason?: string;
+  failedStep?: number;
 }
 export function comparePair(baseline: ReplayConclusion, candidate: ReplayConclusion) {
   if (!baseline.setupEquivalent || !candidate.setupEquivalent || baseline.planId !== candidate.planId || baseline.probeStep !== candidate.probeStep || baseline.actor !== candidate.actor || baseline.resourceRef !== candidate.resourceRef) return 'inconclusive' as const;

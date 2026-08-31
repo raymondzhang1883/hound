@@ -63,27 +63,35 @@ test('replays one recorded browser plan on fresh correct and buggy deployments',
     expect(serialized).not.toContain(credentials.alice);
     expect(serialized).not.toContain(candidate.appUrl);
     await close(discovery);
+    const replay = (run: BrowserExperiment, label: string) => test.step(label, async () => {
+      const started = performance.now();
+      const result = await run.replay(plan);
+      await test.info().attach(`${label}.json`, { contentType: 'application/json', body: JSON.stringify({
+        kind: 'authored-runtime-check', elapsedMs: Math.round(performance.now() - started), ...result,
+      }, null, 2) });
+      return result;
+    });
 
     const baselineRun = await open(baseline);
     const alteredPlan = structuredClone(plan);
     alteredPlan.probeActor = 'alice';
-    expect(await baselineRun.replay(alteredPlan)).toMatchObject({ setupEquivalent: false, result: 'inconclusive' });
+    expect(await baselineRun.replay(alteredPlan)).toMatchObject({ setupEquivalent: false, result: 'inconclusive', reason: 'invalid_replay_plan' });
     expect(baselineRun.usage.executed).toBe(0);
-    const baselineResult = await baselineRun.replay(plan);
+    const baselineResult = await replay(baselineRun, 'baseline-replay');
     expect(baselineResult).toMatchObject({ setupEquivalent: true, result: 'denied' });
     await close(baselineRun);
     const candidateRun = await open(candidate);
-    const candidateResult = await candidateRun.replay(plan);
+    const candidateResult = await replay(candidateRun, 'candidate-replay');
     expect(candidateResult).toMatchObject({ setupEquivalent: true, result: 'violation' });
     expect(comparePair(baselineResult, candidateResult)).toBe('candidate_only_violation');
     await close(candidateRun);
 
     const correctCandidate = await open(baseline);
-    const correctResult = await correctCandidate.replay(plan);
+    const correctResult = await replay(correctCandidate, 'correct-control');
     expect(comparePair(baselineResult, correctResult)).toBe('no_reproduced_candidate_violation');
     await close(correctCandidate);
     const buggyBaseline = await open(candidate);
-    const buggyResult = await buggyBaseline.replay(plan);
+    const buggyResult = await replay(buggyBaseline, 'shared-bug-control');
     expect(comparePair(buggyResult, candidateResult)).toBe('shared_violation');
     await close(buggyBaseline);
   } finally {

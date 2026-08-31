@@ -11,6 +11,7 @@
     "test": "tsx --test apps/fixture/tests/*.test.ts services/runtime/tests/*.test.ts",
     "setup:browser": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright install chromium",
     "test:browser": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test",
+    "test:runtime": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test services/runtime/tests/browser",
     "check": "npm run typecheck && npm test && npm run test:browser",
     "fixture": "tsx apps/fixture/src/main.ts",
     "demo": "tsx apps/fixture/scripts/demo.ts"
