@@ -24,6 +24,8 @@ export interface ReplayPlan { version: 1; id: string; steps: RecordedStep[]; pro
 export type StepResult = { status: 'executed'; verdict: Verdict } | { status: 'rejected' | 'inconclusive' | 'stopped'; code: string };
 const actors = ['alice', 'bob'] as const;
 const planHash = (plan: Omit<ReplayPlan, 'id'>) => createHash('sha256').update(canonical(plan)).digest('hex');
+const rejectedTargets = new Set(['stale_observation', 'unknown_control', 'control_changed', 'incompatible_control',
+  'invalid_link_target', 'unobserved_route', 'unobserved_option']);
 
 /** Hosts deterministic execution only. A policy may see observations(), never this object's evidence. */
 export class BrowserExperiment {
@@ -37,6 +39,7 @@ export class BrowserExperiment {
   private locked = false;
   private decisions = 0;
   private timer?: ReturnType<typeof setTimeout>;
+  private closing?: Promise<void>;
   private constructor(private readonly config: ExperimentConfig, private readonly harness: FixtureHarness, private readonly execution: Execution) {
     this.bindings = new Bindings(config.trialText);
     this.oracle = new RemovedMemberWriteOracle(execution.id);
@@ -46,6 +49,8 @@ export class BrowserExperiment {
     if (config.appUrl === config.harnessUrl) reject('shared_app_harness_origin');
     if (!Number.isInteger(config.maxDecisions ?? 40) || (config.maxDecisions ?? 40) < 1 || (config.maxDecisions ?? 40) > 120) reject('invalid_budget');
     if (!Number.isFinite(config.deadlineMs ?? 600_000) || (config.deadlineMs ?? 600_000) < 1 || (config.deadlineMs ?? 600_000) > 600_000) reject('invalid_deadline');
+    // Validate before acquiring state; an invalid marker must not leak an execution handle.
+    new Bindings(config.trialText);
     const harness = new FixtureHarness(config.harnessUrl, config.harnessKey);
     if ((await harness.health()).contractVersion !== 1) reject('unsupported_fixture_contract');
     const execution = await harness.begin();
@@ -70,7 +75,7 @@ export class BrowserExperiment {
       }
       experiment.timer = setTimeout(() => {
         experiment.terminal = 'trial_deadline';
-        void experiment.closeBrowsers();
+        void experiment.closeBrowsers().catch(() => {});
       }, config.deadlineMs ?? 600_000);
       return experiment;
     } catch (error) { await experiment.close(); throw error; }
@@ -90,9 +95,11 @@ export class BrowserExperiment {
     if (++this.decisions > (this.config.maxDecisions ?? 40)) { this.terminal = 'decision_budget'; return { status: 'stopped', code: this.terminal }; }
     this.locked = true;
     let dispatched = false;
+    let parsing = true;
     let actionTimer: ReturnType<typeof setTimeout> | undefined;
     try {
       const decision = parseDecision(input);
+      parsing = false;
       if (decision.kind === 'stop') { this.terminal = 'policy_stopped'; return { status: 'stopped', code: this.terminal }; }
       const transport = this.transports.get(decision.actor)!;
       const view = this.views.get(decision.actor)!;
@@ -133,13 +140,14 @@ export class BrowserExperiment {
       const verifiedActor = await transport.identity();
       if (verifiedActor !== decision.actor) reject('authentication_lost');
       transport.begin(); dispatched = true;
-      actionTimer = setTimeout(() => { this.terminal = 'action_timeout'; void this.closeBrowsers(); }, 5_000);
+      actionTimer = setTimeout(() => { this.terminal = 'action_timeout'; void this.closeBrowsers().catch(() => {}); }, 5_000);
       await dispatch();
       const exchanges = await transport.end();
       for (const other of this.transports.values()) other.check();
       const after = await this.harness.inspect(this.execution);
       const stillAuthenticated = await transport.identity();
       if (this.terminal) reject(this.terminal);
+      if (stillAuthenticated !== decision.actor) reject('authentication_lost');
       const index = this.records.length;
       for (const exchange of exchanges) this.bindings.capture(exchange, index);
       const verdict = this.oracle.observe({ step: index, actor: decision.actor, session: `${decision.actor}/primary`,
@@ -152,7 +160,9 @@ export class BrowserExperiment {
       return { status: 'executed', verdict };
     } catch (error) {
       const code = error instanceof ContractError ? error.code : 'execution_failed';
-      if (!dispatched && !this.terminal && code !== 'authentication_lost') return { status: 'rejected', code };
+      // Only known proposal errors are recoverable. Broken browsers, transport, or inspection
+      // are inconclusive even if they fail before dispatching an application interaction.
+      if (!dispatched && !this.terminal && error instanceof ContractError && (parsing || rejectedTargets.has(code))) return { status: 'rejected', code };
       this.terminal ??= code; await this.closeBrowsers();
       return { status: 'inconclusive', code: this.terminal };
     } finally { if (actionTimer) clearTimeout(actionTimer); this.locked = false; }
@@ -200,11 +210,14 @@ export class BrowserExperiment {
     return conclusion;
   }
 
-  async close() {
-    if (this.timer) clearTimeout(this.timer);
-    this.terminal ??= 'closed';
-    // Release only after browser activity has been stopped. Surface cleanup failure to the owner.
-    await this.closeBrowsers();
-    await this.harness.end(this.execution);
+  close(): Promise<void> {
+    this.closing ??= (async () => {
+      if (this.timer) clearTimeout(this.timer);
+      this.terminal ??= 'closed';
+      // Release only after browser activity has been stopped. Surface cleanup failure to the owner.
+      await this.closeBrowsers();
+      await this.harness.end(this.execution);
+    })();
+    return this.closing;
   }
 }

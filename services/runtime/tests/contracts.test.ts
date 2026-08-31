@@ -32,3 +32,7 @@ it('rebinding preserves resource and generated-text dependencies without evaluat
   assert.throws(() => source.route('document_99.page'), ContractError);
   assert.throws(() => target.render([{ ref: 'harness_key' }]), ContractError);
 });
+
+it('rejects empty or oversized trial markers before template replacement', () => {
+  for (const marker of ['', '   ', 'x'.repeat(121)]) assert.throws(() => new Bindings(marker), ContractError);
+});

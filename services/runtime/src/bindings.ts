@@ -4,7 +4,10 @@ import { reject, type HttpExchange, type TextTemplate, type TextValue } from './
 export class Bindings {
   private values = new Map<string, string>();
   private origins = new Map<string, number>();
-  constructor(trialText = `hound-${randomUUID()}`) { this.values.set('trial_text', trialText); }
+  constructor(trialText = `hound-${randomUUID()}`) {
+    if (typeof trialText !== 'string' || !trialText.trim() || trialText.length > 120) reject('invalid_trial_text');
+    this.values.set('trial_text', trialText);
+  }
   value(ref: string) { return this.values.get(ref) ?? reject('unbound_reference'); }
   ref(value: string) { return [...this.values].find(([, actual]) => actual === value)?.[0] ?? reject('unbound_reference'); }
   text(value: TextValue) { return 'literal' in value ? value.literal : this.value(value.ref); }

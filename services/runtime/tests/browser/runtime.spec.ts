@@ -65,6 +65,10 @@ test('replays one recorded browser plan on fresh correct and buggy deployments',
     await close(discovery);
 
     const baselineRun = await open(baseline);
+    const alteredPlan = structuredClone(plan);
+    alteredPlan.probeActor = 'alice';
+    expect(await baselineRun.replay(alteredPlan)).toMatchObject({ setupEquivalent: false, result: 'inconclusive' });
+    expect(baselineRun.usage.executed).toBe(0);
     const baselineResult = await baselineRun.replay(plan);
     expect(baselineResult).toMatchObject({ setupEquivalent: true, result: 'denied' });
     await close(baselineRun);
@@ -116,6 +120,70 @@ test('does not acquire or reset an occupied fixture', async ({ browser }) => {
     await expect(BrowserExperiment.open(browser, { ...fixture, harnessKey, credentials })).rejects.toThrow('409');
     expect((await harness.inspect(execution)).executionId).toBe(execution.id);
   } finally { await harness.end(execution); await fixture.close(); }
+});
+
+test('browser failure before dispatch is terminal rather than a rejected proposal', async ({ browser }) => {
+  const harnessKey = randomBytes(32).toString('hex');
+  const fixture = await startFixture({ mode: 'baseline', credentials, harnessKey });
+  const run = await BrowserExperiment.open(browser, { ...fixture, harnessKey, credentials });
+  try {
+    await Promise.all(browser.contexts().map(context => context.close()));
+    expect(await run.step({ version: 1, kind: 'observe', actor: 'alice' })).toMatchObject({ status: 'inconclusive' });
+    expect(await run.step({ version: 1, kind: 'observe', actor: 'alice' })).toMatchObject({ status: 'stopped' });
+    expect(run.usage.executed).toBe(0);
+  } finally { await run.close(); await fixture.close(); }
+});
+
+test('signing out terminates the trial without silently replacing the actor session', async ({ browser }) => {
+  const harnessKey = randomBytes(32).toString('hex');
+  const fixture = await startFixture({ mode: 'baseline', credentials, harnessKey });
+  const run = await BrowserExperiment.open(browser, { ...fixture, harnessKey, credentials });
+  try {
+    const observation = run.observations().bob;
+    const target = observation.controls.find(control => control.name === 'Sign out')!;
+    expect(await run.step({ version: 1, kind: 'click', actor: 'bob', observationId: observation.observationId, targetId: target.id }))
+      .toEqual({ status: 'inconclusive', code: 'authentication_lost' });
+    expect(browser.contexts()).toHaveLength(0);
+    expect(await run.step({ version: 1, kind: 'observe', actor: 'bob' })).toMatchObject({ status: 'stopped' });
+  } finally { await run.close(); await fixture.close(); }
+});
+
+test('rejected decisions consume budget and repeated cleanup releases the execution exactly once', async ({ browser }) => {
+  const harnessKey = randomBytes(32).toString('hex');
+  const fixture = await startFixture({ mode: 'baseline', credentials, harnessKey });
+  const run = await BrowserExperiment.open(browser, { ...fixture, harnessKey, credentials, maxDecisions: 1 });
+  try {
+    expect(await run.step('not JSON')).toEqual({ status: 'rejected', code: 'invalid_json' });
+    expect(await run.step({ version: 1, kind: 'observe', actor: 'alice' })).toEqual({ status: 'stopped', code: 'decision_budget' });
+    expect(run.usage.executed).toBe(0);
+    await Promise.all([run.close(), run.close()]);
+    const harness = new FixtureHarness(fixture.harnessUrl, harnessKey);
+    const next = await harness.begin();
+    expect((await harness.inspect(next)).workspaces).toEqual([]);
+    await harness.end(next);
+  } finally { await run.close(); await fixture.close(); }
+});
+
+test('elapsed trials close actor contexts and prohibit further dispatch', async ({ browser }) => {
+  const harnessKey = randomBytes(32).toString('hex');
+  const fixture = await startFixture({ mode: 'baseline', credentials, harnessKey });
+  const run = await BrowserExperiment.open(browser, { ...fixture, harnessKey, credentials, deadlineMs: 20 });
+  try {
+    await expect.poll(() => browser.contexts().length).toBe(0);
+    expect(await run.step({ version: 1, kind: 'observe', actor: 'alice' })).toEqual({ status: 'stopped', code: 'trial_deadline' });
+  } finally { await run.close(); await fixture.close(); }
+});
+
+test('invalid trial configuration does not acquire an execution', async ({ browser }) => {
+  const harnessKey = randomBytes(32).toString('hex');
+  const fixture = await startFixture({ mode: 'baseline', credentials, harnessKey });
+  try {
+    await expect(BrowserExperiment.open(browser, { ...fixture, harnessKey, credentials, trialText: '' })).rejects.toThrow('invalid_trial_text');
+    const harness = new FixtureHarness(fixture.harnessUrl, harnessKey);
+    const execution = await harness.begin();
+    await harness.end(execution);
+    expect(browser.contexts()).toHaveLength(0);
+  } finally { await fixture.close(); }
 });
 
 async function listen(server: Server) {
