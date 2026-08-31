@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** a working local benchmark fixture and browser runtime with isolated actors, validated browser decisions, deterministic write verification, and fresh-state paired replay. Autonomous exploration, the Go control plane, distributed workers, minimization, and the Hound dashboard are not implemented yet.
+**Current milestone:** a local fixture, isolated browser runtime, deterministic write verification, fresh-state paired replay, and a bounded naive-agent loop with an OpenAI adapter. The agent CLI is tested offline but has not made a live model call; autonomous discovery results are still pending. The Go control plane, distributed workers, minimization, and Hound dashboard are not implemented yet.
 
 ## The first regression
 
@@ -57,6 +57,26 @@ The baseline shows `403`. The candidate saves the edit. Alice can open the docum
 
 `Ctrl+C` stops both processes and removes the private demo manifest. Run `npm run demo` again for clean state. State is intentionally discarded on restart. Assets are loaded on startup, so restart after code/UI changes.
 
+## Local agent pilot
+
+The initial policy uses **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff; actual discovery capability still needs a live pilot.
+
+```sh
+npm run hunt -- --preflight
+npm run hunt:check
+```
+
+The readiness check makes no network requests. `hunt:check` runs the complete controller and real fixture browsers with simulated provider responses and an authored test sequence. It verifies a candidate-only result, the both-correct control, and cancellation. It is not an autonomous-discovery benchmark. Add `-- --headed` to watch it.
+
+For live exploration, configure `OPENAI_API_KEY` in the ignored project `.env` file, then explicitly supply a dollar budget:
+
+```sh
+npm run hunt -- --case positive --max-cost-usd 1
+npm run hunt -- --case negative --max-cost-usd 1
+```
+
+Each command has a separate estimated spend allowance; the example allocates $2 across the two pilots. Costs depend on actual tokens. No automatic provider retries or model fallback occur. Each run creates its own loopback fixtures and private records under `.hound/runs/`; it does not borrow the interactive demo. A nondetection is never called a security pass. See the agent setup and results guide before running a paid pilot.
+
 ## Tests and evidence
 
 ```sh
@@ -98,12 +118,14 @@ apps/fixture/
   scripts/         Two-process local demo launcher
   tests/           State, HTTP, and Playwright acceptance checks
 services/runtime/
-  src/             Decision contract, browser execution, bindings, oracle, replay
+  src/             Browser execution, oracle/replay, provider policy, controller, journal
+  scripts/         Bounded local agent pilot CLI
   tests/           Pure checks and local browser integration tests
   project-brief.md  Product direction and phased build brief
   fixture.md       How to run, reset, and integrate the benchmark target
   runtime.md       Deterministic runtime interface, completion, and failure semantics
+  agent.md         Model setup, pilot budgets, private run records, and outcomes
   design-decisions/
 ```
 
-The browser action/observation contract is implemented through deterministic replay following an adversarial review. The next open decision is the provider/model and spend cap for the early agent evaluation; no live agent measurements exist yet. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+The browser contract and naive-agent integration are implemented with offline tests following an adversarial review. The next checkpoint is a locally configured API key and an explicitly budgeted live pilot; no live agent measurements exist yet. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
