@@ -1,7 +1,7 @@
 import { it } from 'node:test';
 import assert from 'node:assert/strict';
 import { OpenAIPolicy, MODEL } from '../src/openai-policy.js';
-import { policyInput, historyItem, PolicyError, type PolicyInput } from '../src/policy.js';
+import { policyInput, historyItem, PolicyError, POLICY_INSTRUCTIONS, PROMPT_VERSION, type PolicyInput } from '../src/policy.js';
 
 const observation = (actor: 'alice' | 'bob') => ({ version: 1 as const, actor, session: 'primary' as const, observationId: `${actor}-o1`, routeRef: 'home', text: 'Workspaces', controls: [], knownRoutes: ['home'], truncated: false });
 const input = (): PolicyInput => policyInput({ alice: observation('alice'), bob: observation('bob') }, [], 40);
@@ -20,14 +20,29 @@ it('sends a fixed structured request without hosted tools or hidden state and ac
     const body = JSON.parse(init!.body as string);
     assert.equal(body.model, MODEL); assert.equal(body.store, false); assert.deepEqual(body.tools, []);
     assert.equal(body.reasoning.effort, 'medium'); assert.equal(body.max_output_tokens, 4096);
+    assert.equal(body.text.format.name, 'hound_browser_decision_v2');
     assert.equal(body.text.format.strict, true); assert.equal(body.text.format.schema.additionalProperties, false);
-    assert.ok(body.text.format.schema.properties.decision.anyOf);
+    const variants = body.text.format.schema.properties.decision.anyOf;
+    const byKind = (kind: string) => variants.find((variant: any) => variant.properties.kind.enum[0] === kind);
+    assert.deepEqual(byKind('click').properties.observationId, { type: 'string', minLength: 1, maxLength: 100 });
+    assert.deepEqual(byKind('navigate').properties.routeRef, { type: 'string', minLength: 1, maxLength: 80 });
+    assert.deepEqual(byKind('stop').properties.reason, { type: 'string', minLength: 1, maxLength: 240 });
+    assert.deepEqual(byKind('select').properties.option, { type: 'string', maxLength: 256 });
+    assert.deepEqual(byKind('fill').properties.value.anyOf[0].properties.literal, { type: 'string', maxLength: 10_000 });
     assert.ok(!('previous_response_id' in body)); assert.ok(!(init!.body as string).includes('local-unit-key'));
     return Response.json(completed());
   } });
   assert.deepEqual(await policy.decide(input(), signal()), decision);
   assert.equal(calls, 1); assert.equal(policy.accounting().estimatedCostUsd, 0.009);
   assert.equal(policy.accounting().unknownUsageCalls, 0);
+});
+
+it('versions the improved simple policy and states a generic causal test without exposing the fixture seed', () => {
+  assert.equal(PROMPT_VERSION, 'hound-simple-browser@2');
+  for (const requirement of ['before-and-after authorization experiment', 'successful modification', 'same actor, session, and resource', 'distinguishable before-and-after values', 'invariant was not exercised']) {
+    assert.ok(POLICY_INSTRUCTIONS.includes(requirement));
+  }
+  for (const hidden of ['stale-write', 'permission cache', 'Open document', 'Remove Bob', 'Save document']) assert.ok(!POLICY_INSTRUCTIONS.includes(hidden));
 });
 
 it('reserves cost before dispatch and enforces the provider call budget', async () => {

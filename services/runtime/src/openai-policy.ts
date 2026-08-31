@@ -39,7 +39,7 @@ export class OpenAIPolicy implements Policy {
     if (this.calls >= (this.config.maxCalls ?? 120)) throw new PolicyError('provider_call_budget');
     const body = JSON.stringify({ model: MODEL, instructions: POLICY_INSTRUCTIONS,
       input: [{ role: 'user', content: JSON.stringify(input) }],
-      text: { format: { type: 'json_schema', name: 'hound_browser_decision_v1', strict: true, schema: DECISION_SCHEMA } },
+      text: { format: { type: 'json_schema', name: 'hound_browser_decision_v2', strict: true, schema: DECISION_SCHEMA } },
       reasoning: { effort: 'medium' }, max_output_tokens: MAX_OUTPUT_TOKENS, tools: [], store: false, service_tier: 'default',
     });
     const bytes = Buffer.byteLength(body);
