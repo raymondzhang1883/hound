@@ -6,6 +6,7 @@ export class Bindings {
   private origins = new Map<string, number>();
   constructor(trialText = `hound-${randomUUID()}`) { this.values.set('trial_text', trialText); }
   value(ref: string) { return this.values.get(ref) ?? reject('unbound_reference'); }
+  ref(value: string) { return [...this.values].find(([, actual]) => actual === value)?.[0] ?? reject('unbound_reference'); }
   text(value: TextValue) { return 'literal' in value ? value.literal : this.value(value.ref); }
   template(text: string): TextTemplate {
     const values = [...this.values].sort((a, b) => b[1].length - a[1].length);
@@ -25,7 +26,7 @@ export class Bindings {
   render(template: TextTemplate) { return template.map(part => 'literal' in part ? part.literal : this.value(part.ref)).join(''); }
   display(text: string) { return this.template(text).map(part => 'literal' in part ? part.literal : `<${part.ref}>`).join(''); }
   private bind(kind: 'workspace' | 'document' | 'invitation', id: unknown, step: number) {
-    if (typeof id !== 'string' || !/^[0-9a-f-]{36}$/.test(id)) reject('invalid_resource_binding');
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) reject('invalid_resource_binding');
     const existing = [...this.values].find(([ref, value]) => ref.startsWith(`${kind}_`) && value === id);
     if (existing) return existing[0];
     if ([...this.values.values()].includes(id)) reject('conflicting_resource_binding');
