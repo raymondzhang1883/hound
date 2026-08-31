@@ -9,6 +9,7 @@ export class ActorTransport {
   private pending = new Set<Promise<void>>();
   private bootstrapping = true;
   private failure?: string;
+  private closing?: Promise<void>;
   private constructor(context: BrowserContext, private readonly origin: string) { this.context = context; }
 
   static async create(browser: Browser, origin: string) {
@@ -78,5 +79,10 @@ export class ActorTransport {
     const body = await response.json();
     return body.actorKey === 'alice' || body.actorKey === 'bob' ? body.actorKey as 'alice' | 'bob' : null;
   }
-  async close() { await this.context.close(); await Promise.allSettled([...this.pending]); }
+  close(): Promise<void> {
+    // Playwright can return early on a duplicate close. All owners must await the original
+    // context teardown before the experiment releases its fixture execution.
+    this.closing ??= (async () => { await this.context.close(); await Promise.allSettled([...this.pending]); })();
+    return this.closing;
+  }
 }

@@ -12,6 +12,7 @@ import { RemovedMemberWriteOracle, canonical, type Verdict, type ReplayConclusio
 export interface ExperimentConfig {
   appUrl: string; harnessUrl: string; harnessKey: string; credentials: Credentials;
   maxDecisions?: number; deadlineMs?: number; trialText?: string;
+  signal?: AbortSignal;
 }
 export type RecordedAction =
   | { actor: Actor; kind: 'click'; recipe: LocatorRecipe }
@@ -40,12 +41,18 @@ export class BrowserExperiment {
   private decisions = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private closing?: Promise<void>;
+  private abortHandler?: () => void;
   private constructor(private readonly config: ExperimentConfig, private readonly harness: FixtureHarness, private readonly execution: Execution) {
     this.bindings = new Bindings(config.trialText);
     this.oracle = new RemovedMemberWriteOracle(execution.id);
+    if (config.signal) {
+      this.abortHandler = () => { this.terminal = 'cancelled'; void this.closeBrowsers().catch(() => {}); };
+      config.signal.addEventListener('abort', this.abortHandler, { once: true });
+    }
   }
 
   static async open(browser: Browser, config: ExperimentConfig) {
+    if (config.signal?.aborted) reject('cancelled');
     if (config.appUrl === config.harnessUrl) reject('shared_app_harness_origin');
     if (!Number.isInteger(config.maxDecisions ?? 40) || (config.maxDecisions ?? 40) < 1 || (config.maxDecisions ?? 40) > 120) reject('invalid_budget');
     if (!Number.isFinite(config.deadlineMs ?? 600_000) || (config.deadlineMs ?? 600_000) < 1 || (config.deadlineMs ?? 600_000) > 600_000) reject('invalid_deadline');
@@ -56,12 +63,15 @@ export class BrowserExperiment {
     const execution = await harness.begin();
     const experiment = new BrowserExperiment(config, harness, execution);
     try {
+      if (config.signal?.aborted) reject('cancelled');
       const initial = await harness.inspect(execution);
       if (initial.workspaces.length || initial.memberships.length || initial.documents.length || initial.invitations.length) reject('dirty_fixture');
       const secrets = [config.harnessKey, execution.token, ...Object.values(config.credentials)];
       for (const actor of actors) {
+        if (config.signal?.aborted) reject('cancelled');
         const transport = await ActorTransport.create(browser, config.appUrl);
         experiment.transports.set(actor, transport);
+        if (config.signal?.aborted) reject('cancelled');
         const page = transport.page;
         await page.goto(config.appUrl);
         await page.getByLabel('Account', { exact: true }).selectOption(actor);
@@ -73,6 +83,7 @@ export class BrowserExperiment {
         const view = new ActorView(actor, page, config.appUrl, experiment.bindings, secrets);
         experiment.views.set(actor, view); await view.snapshot();
       }
+      if (config.signal?.aborted) reject('cancelled');
       experiment.timer = setTimeout(() => {
         experiment.terminal = 'trial_deadline';
         void experiment.closeBrowsers().catch(() => {});
@@ -215,6 +226,7 @@ export class BrowserExperiment {
   close(): Promise<void> {
     this.closing ??= (async () => {
       if (this.timer) clearTimeout(this.timer);
+      if (this.abortHandler) this.config.signal?.removeEventListener('abort', this.abortHandler);
       this.terminal ??= 'closed';
       // Release only after browser activity has been stopped. Surface cleanup failure to the owner.
       await this.closeBrowsers();
