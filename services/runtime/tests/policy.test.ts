@@ -87,14 +87,15 @@ it('uses the final answer phase without treating intermediate commentary as a de
   const message = (phase: string, text: string) => ({ type: 'message', phase, status: 'completed', content: [{ type: 'output_text', text }] });
   const final = message('final_answer', JSON.stringify({ decision }));
   const commentary = message('commentary', 'private intermediate text');
-  for (const output of [[commentary, final], [final, commentary], [final]]) {
+  for (const output of [[commentary, final], [final, commentary], [final], [commentary, final, commentary, { ...final, id: 'another-id' }]]) {
     const policy = new OpenAIPolicy({ apiKey: 'test-key', maxCostUsd: 1, transport: transport(completed({ output })) });
     assert.deepEqual(await policy.decide(input(), signal()), decision);
-    assert.equal(policy.accounting().outputShape?.phases.final_answer, 1);
+    assert.equal(policy.accounting().outputShape?.distinctFinalContents, 1);
     assert.ok(!JSON.stringify(policy.accounting()).includes('private intermediate text'));
   }
   for (const [output, code] of [
-    [[final, final], 'provider_message_phase'],
+    [[final, message('final_answer', JSON.stringify({ decision: { ...decision, actor: 'bob' } }))], 'provider_message_phase'],
+    [[final, message('final_answer', 'private invalid final')], 'provider_message_phase'],
     [[commentary], 'provider_message_phase'],
     [[message('private-unknown-phase', '{}'), final], 'provider_message_phase'],
     [[...completed().output, final], 'provider_message_phase'],

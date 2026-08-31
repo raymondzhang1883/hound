@@ -20,7 +20,7 @@ export class OpenAIPolicy implements Policy {
   private tokens: TokenUsage = { inputTokens: 0, outputTokens: 0 };
   private stopped?: string;
   private busy = false;
-  private outputShape?: { textCount: number; phases: { commentary: number; final_answer: number; unphased: number; other: number }; textBytes?: number; jsonKind?: string; knownFields?: string[]; unknownFields?: number; validBareDecision?: boolean };
+  private outputShape?: { textCount: number; phases: { commentary: number; final_answer: number; unphased: number; other: number }; distinctFinalContents?: number; textBytes?: number; jsonKind?: string; knownFields?: string[]; unknownFields?: number; validBareDecision?: boolean };
   constructor(private readonly config: OpenAIConfig) {
     if (!config.apiKey.trim()) throw new PolicyError('missing_api_key');
     if (!Number.isFinite(config.maxCostUsd) || config.maxCostUsd <= 0 || config.maxCostUsd > 10) throw new PolicyError('invalid_cost_budget');
@@ -96,7 +96,11 @@ export class OpenAIPolicy implements Policy {
       // Responses may include intermediate commentary before the completed answer.
       // Select by its documented phase, never by whichever text happens to parse.
       const finals = messages.filter((item: any) => item.phase === 'final_answer');
-      const selected = phases.other === 0 && phases.unphased === 0 && finals.length === 1 ? finals[0] :
+      const distinctFinalContents = new Set(finals.map((item: any) => JSON.stringify(item.content))).size;
+      this.outputShape.distinctFinalContents = distinctFinalContents;
+      // Exact duplicate final contents propose the same single action. Different
+      // finals are ambiguous: do not choose first/last or try parsing until one works.
+      const selected = phases.other === 0 && phases.unphased === 0 && distinctFinalContents === 1 ? finals[0] :
         messages.length === 1 && phases.unphased === 1 ? messages[0] : undefined;
       if (!selected) throw new PolicyError('provider_message_phase');
       if (messages.some((item: any) => item.status != null && item.status !== 'completed')) throw new PolicyError('provider_incomplete');
