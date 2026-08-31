@@ -15,9 +15,9 @@ import { PolicyError, PROMPT_VERSION } from '../src/policy.js';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const help = `Hound local agent pilot (owned loopback fixtures only)
 
-  npm run hunt -- --preflight
-  npm run hunt -- --case positive --max-cost-usd 2
-  npm run hunt -- --case negative --max-cost-usd 2
+  ./hound hunt --preflight
+  ./hound hunt --case positive --max-cost-usd 2
+  ./hound hunt --case negative --max-cost-usd 2
 
 Options: --case positive|negative, --max-cost-usd <0..10>, --trials <1..3>, --headed, --preflight, --help
 Requires OPENAI_API_KEY in your environment or the ignored project .env file.
@@ -30,7 +30,7 @@ async function main() {
   let args;
   try { args = parseArgs({ options: { case: { type: 'string' }, 'max-cost-usd': { type: 'string' }, trials: { type: 'string' },
     headed: { type: 'boolean' }, preflight: { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }); }
-  catch { console.error('Invalid command arguments. Run npm run hunt -- --help.'); process.exitCode = 2; return; }
+  catch { console.error('Invalid command arguments. Run ./hound hunt --help.'); process.exitCode = 2; return; }
   const { values } = args;
   if (values.help) { console.log(help); return; }
   const caseName = values.case ?? 'positive';
@@ -39,7 +39,7 @@ async function main() {
   const trials = values.trials === undefined ? 3 : Number(values.trials);
   if (!['positive', 'negative'].includes(caseName) || !Number.isInteger(trials) || trials < 1 || trials > 3 ||
       (costText !== undefined && (!/^(?:0|[1-9]\d*)(?:\.\d{1,6})?$/.test(costText) || !Number.isFinite(maxCostUsd) || maxCostUsd! <= 0 || maxCostUsd! > 10))) {
-    console.error('Invalid case or budget. Run npm run hunt -- --help.'); process.exitCode = 2; return;
+    console.error('Invalid case or budget. Run ./hound hunt --help.'); process.exitCode = 2; return;
   }
   const apiKey = process.env.OPENAI_API_KEY?.trim() ?? '';
   const browserInstalled = existsSync(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? chromium.executablePath());
@@ -52,7 +52,7 @@ async function main() {
   if (!apiKey || maxCostUsd === undefined || !browserInstalled) {
     console.error(!apiKey ? 'OPENAI_API_KEY is missing. Configure it locally; do not paste it into chat or commit it.' :
       maxCostUsd === undefined ? 'Supply --max-cost-usd explicitly to authorize a bounded live run.' : 'Chromium is missing. Run npm run setup:browser.');
-    console.error('No model request was made. Run npm run hunt -- --preflight for readiness details.'); process.exitCode = 2; return;
+    console.error('No model request was made. Run ./hound hunt --preflight for readiness details.'); process.exitCode = 2; return;
   }
   const policy = new OpenAIPolicy({ apiKey, maxCostUsd });
   const controller = new AbortController();

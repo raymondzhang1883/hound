@@ -15,7 +15,7 @@ import { RunJournal } from '../src/journal.js';
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const help = `Hound local paired minimizer (owned loopback fixtures only; zero model calls)
 
-  npm run minimize -- --run-id <positive-run-id>
+  ./hound minimize --run-id <positive-run-id>
 
 Options: --run-id <id>, --confirmations <1..5>, --headed, --help
 Reads one owner-private verified plan under .hound/runs, starts fresh local fixture pairs,
@@ -34,7 +34,7 @@ async function atomicSource(path: string, source: string) {
 async function main() {
   let args;
   try { args = parseArgs({ options: { 'run-id': { type: 'string' }, confirmations: { type: 'string' }, headed: { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }); }
-  catch { console.error('Invalid arguments. Run npm run minimize -- --help.'); process.exitCode = 2; return; }
+  catch { console.error('Invalid arguments. Run ./hound minimize --help.'); process.exitCode = 2; return; }
   if (args.values.help) { console.log(help); return; }
   const runId = args.values['run-id'] ?? '';
   const confirmations = args.values.confirmations === undefined ? 3 : Number(args.values.confirmations);

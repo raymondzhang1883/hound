@@ -10,13 +10,17 @@ const runRoot = join(root, '.hound/runs');
 const minimizationRoot = join(root, '.hound/minimizations');
 const help = `Hound CLI (terminal-first local interface)
 
+  ./hound hunt --preflight
+  ./hound hunt --case positive|negative --max-cost-usd <amount>
+  ./hound minimize --run-id <confirmed-positive-id>
   ./hound runs [--json] [--limit <1..100>]
   ./hound show --run-id <id> [--json]
   ./hound report --run-id <id> [--output <workspace-relative.html>]
 
-runs and show print sanitized terminal results. report explicitly creates a static,
-self-contained HTML artifact. These read-only commands launch no browser, fixture, or model.
-Existing execution commands remain npm run hunt and npm run minimize.
+hunt executes a bounded local exploration; minimize uses fresh deterministic fixture pairs.
+runs and show print sanitized results. report explicitly creates a static, self-contained
+HTML artifact. Read-only commands launch no browser, fixture, or model. Existing npm scripts
+remain compatibility aliases.
 `;
 
 async function jsonFile(path: string, optional = false) {

@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. See the causal pilot and minimization record. Cumulative estimated model cost remains $0.532229; minimization and export added no model calls. The Go control plane, distributed workers, and Hound dashboard are not implemented yet.
+**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. The executable CLI now lists and explains local runs and explicitly exports a self-contained example HTML finding report. See the causal pilot, minimization record, and CLI guide. Cumulative estimated model cost remains $0.532229; minimization, result inspection, and report export add no model calls. The Go control plane and distributed workers are not implemented yet.
 
 ## The first regression
 
@@ -30,6 +30,7 @@ npm ci
 npm run setup:browser
 npm run check
 npm run demo
+./hound --help
 ```
 
 The demo launches two independent processes and starts a fresh execution in each:
@@ -62,7 +63,7 @@ The baseline shows `403`. The candidate saves the edit. Alice can open the docum
 The initial model is **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff. The working `hound-simple-browser@2` policy remains a one-primitive loop; it adds a generic causal authorization-test method without a fixture sequence or planner. One positive and one both-correct live invocation are encouraging integration evidence, not detection- or false-positive-rate estimates.
 
 ```sh
-npm run hunt -- --preflight
+./hound hunt --preflight
 npm run hunt:check
 ```
 
@@ -71,8 +72,8 @@ The readiness check makes no network requests. `hunt:check` runs the complete co
 For live exploration, configure `OPENAI_API_KEY` in the ignored project `.env` file, then explicitly supply a dollar budget:
 
 ```sh
-npm run hunt -- --case positive --max-cost-usd 1
-npm run hunt -- --case negative --max-cost-usd 1
+./hound hunt --case positive --max-cost-usd 1
+./hound hunt --case negative --max-cost-usd 1
 ```
 
 Each command has a separate estimated spend allowance; the example allocates $2 across the two pilots. Costs depend on actual tokens. No automatic provider retries or model fallback occur. Each run creates its own loopback fixtures and private records under `.hound/runs/`; it does not borrow the interactive demo. A nondetection is never called a security pass. See the agent setup and results guide before running a paid pilot.
@@ -82,12 +83,25 @@ Each command has a separate estimated spend allowance; the example allocates $2 
 Use the run ID of a verified `candidate_only_violation` result. The command uses fresh owned loopback fixture pairs and Chromium; it does not load `.env` or call a model.
 
 ```sh
-npm run minimize -- --run-id <positive-run-id>
+./hound minimize --run-id <positive-run-id>
 npm run test:generated
 HOUND_FIXTURE_MODE=stale-write npm run test:generated
 ```
 
 The first test command should pass. The explicit seeded-candidate command should fail with `Expected: "denied"` and `Received: "violation"`. A successful minimization writes its private journal under `.hound/minimizations/` and exports [the generated regression](generated-tests/removed-member-write.spec.ts). Export requires a deletion-minimal result and three successful confirmation pairs by default. See the minimizer and exporter guide for the algorithm, evidence, and claim limits.
+
+## CLI first, HTML second
+
+The CLI is Hound's primary interface. It owns execution, terminal status, machine-readable output, result inspection, minimization, and report export:
+
+```sh
+./hound runs
+./hound runs --json | jq '.[0]'
+./hound show --run-id <run-id>
+./hound report --run-id <run-id>
+```
+
+`show` is the default way to understand a result. `report` is an explicit secondary export for reviewing or sharing one confirmed finding; it does not start a server or become a separate source of truth. Reports are static, contain no scripts or external assets, and derive from a versioned allowlisted projection that excludes raw observations, provider text, credentials, HTTP bodies, addresses, and private paths. See the CLI and report guide and design decision.
 
 ## Tests and evidence
 
@@ -138,6 +152,7 @@ generated-tests/   Model-free Playwright regressions emitted from confirmed plan
   fixture.md       How to run, reset, and integrate the benchmark target
   runtime.md       Deterministic runtime interface, completion, and failure semantics
   agent.md         Model setup, pilot budgets, private run records, and outcomes
+  cli.md           Primary CLI and secondary static report contract
   minimization.md  Paired reduction, export workflow, evidence, and limits
   design-decisions/
 ```

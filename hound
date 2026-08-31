@@ -1,4 +1,17 @@
 #!/bin/sh
 set -eu
 HOUND_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd -- "$HOUND_ROOT"
+case "${1:-}" in
+  hunt)
+    shift
+    export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
+    exec node --env-file-if-exists="$HOUND_ROOT/.env" --import tsx "$HOUND_ROOT/services/runtime/scripts/hunt.ts" "$@"
+    ;;
+  minimize)
+    shift
+    export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
+    exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/minimize.ts" "$@"
+    ;;
+esac
 exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/hound.ts" "$@"
