@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** a working local benchmark fixture, its browser UI, a protected reset/inspection harness, and deterministic authorization tests. Autonomous exploration, the Go control plane, distributed workers, minimization, and the Hound dashboard are not implemented yet.
+**Current milestone:** a working local benchmark fixture and browser runtime with isolated actors, validated browser decisions, deterministic write verification, and fresh-state paired replay. Autonomous exploration, the Go control plane, distributed workers, minimization, and the Hound dashboard are not implemented yet.
 
 ## The first regression
 
@@ -63,12 +63,15 @@ The baseline shows `403`. The candidate saves the edit. Alice can open the docum
 npm run typecheck
 npm test
 npm run test:browser
+npm run test:runtime
 npm run test:browser -- --repeat-each=3
 ```
 
 The state and HTTP tests cover the seeded behavior, session/workspace isolation, member administration boundaries, invitation reuse, conflicting edits, harness authentication, competing execution acquisition, and a request that spans a reset.
 
 Browser tests exercise the real UI as Alice and Bob, check the server's membership state and persisted body/revision, verify fresh-session denial, and check the small-screen layout. They use fresh instances and contexts on each run and do not disturb the interactive demo. The candidate test **passes when the expected seeded bug is observed**; this suite validates the benchmark target.
+
+`npm run test:runtime` exercises the same fixture through Hound's decision executor, records an authored trajectory, and replays it with new sessions and resource IDs. It checks candidate-only, both-correct, and both-buggy outcomes, plus invalid decisions, lost sessions, closed browsers, deadlines, cleanup, and local traffic restrictions. This demonstrates execution and verification without a model API key. It does **not** demonstrate autonomous discovery. See the runtime guide for its interface and limitations.
 
 After browser tests, `test-results/` contains post-login screenshots and selected JSON evidence; `playwright-report/` contains the HTML report. View it with:
 
@@ -94,9 +97,13 @@ apps/fixture/
   public/          Fieldnotes browser UI
   scripts/         Two-process local demo launcher
   tests/           State, HTTP, and Playwright acceptance checks
+services/runtime/
+  src/             Decision contract, browser execution, bindings, oracle, replay
+  tests/           Pure checks and local browser integration tests
   project-brief.md  Product direction and phased build brief
   fixture.md       How to run, reset, and integrate the benchmark target
+  runtime.md       Deterministic runtime interface, completion, and failure semantics
   design-decisions/
 ```
 
-The next design checkpoint is the proposed browser action/observation contract and early agent evaluation. These are review drafts, not implemented capabilities. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+The browser action/observation contract is implemented through deterministic replay following an adversarial review. The next open decision is the provider/model and spend cap for the early agent evaluation; no live agent measurements exist yet. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
