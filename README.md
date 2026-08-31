@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** a local fixture, isolated browser runtime, deterministic write verification, fresh-state paired replay, and a bounded naive-agent loop with an OpenAI adapter. The first live positive/negative pilot completed after adapter fixes, but the naive policy did not reach a valid write probe or discover the regression. See the pilot results, including all failed attempts and $0.281162 estimated total cost. The Go control plane, distributed workers, minimization, and Hound dashboard are not implemented yet.
+**Current milestone:** a local fixture, isolated browser runtime, deterministic write verification, fresh-state paired replay, and a bounded simple-agent loop with an OpenAI adapter. The original naive policy failed to reach a write probe; the separately versioned simple causal baseline then discovered the seeded regression, reproduced it on fresh candidate state, and observed a fresh baseline denial. The complete v1 pilot remains preserved. Cumulative estimated model cost was $0.532229. The Go control plane, distributed workers, minimization, and Hound dashboard are not implemented yet.
 
 ## The first regression
 
@@ -59,7 +59,7 @@ The baseline shows `403`. The candidate saves the edit. Alice can open the docum
 
 ## Local agent pilot
 
-The initial policy uses **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff. Live access and browser orchestration now work; reliable discovery is not demonstrated. In all six completed pilot trials, the policy removed Bob before establishing legitimate document access, then stopped without testing a write.
+The initial model is **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff. The working `hound-simple-browser@2` policy remains a one-primitive loop; it adds a generic causal authorization-test method without a fixture sequence or planner. One positive and one both-correct live invocation are encouraging integration evidence, not detection- or false-positive-rate estimates.
 
 ```sh
 npm run hunt -- --preflight
@@ -128,4 +128,4 @@ services/runtime/
   design-decisions/
 ```
 
-The browser contract and naive-agent integration are implemented following an adversarial review. The initial live pilot preserves the naive policy's failure to establish test preconditions. The next design checkpoint is improving exploration around that observed failure while keeping this baseline and evaluation protocol intact. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+The browser contract, provider integration, and simple causal baseline are implemented following an adversarial review. The next design checkpoint is deterministic plan minimization and Playwright-test export using the verified v2 trajectory. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
