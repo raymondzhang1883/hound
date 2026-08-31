@@ -1,4 +1,5 @@
 import { DECISION_SCHEMA, POLICY_INSTRUCTIONS, PROMPT_VERSION, PolicyError, type Policy, type PolicyInput } from './policy.js';
+import { parseDecision } from './contracts.js';
 
 export const MODEL = 'gpt-5.4-mini-2026-03-17';
 export const RATE_CARD = { checkedAt: '2026-08-31', inputPerMillionUsd: 0.75, outputPerMillionUsd: 4.50,
@@ -19,6 +20,7 @@ export class OpenAIPolicy implements Policy {
   private tokens: TokenUsage = { inputTokens: 0, outputTokens: 0 };
   private stopped?: string;
   private busy = false;
+  private outputShape?: { textCount: number; textBytes?: number; jsonKind?: string; knownFields?: string[]; unknownFields?: number; validBareDecision?: boolean };
   constructor(private readonly config: OpenAIConfig) {
     if (!config.apiKey.trim()) throw new PolicyError('missing_api_key');
     if (!Number.isFinite(config.maxCostUsd) || config.maxCostUsd <= 0 || config.maxCostUsd > 10) throw new PolicyError('invalid_cost_budget');
@@ -28,7 +30,7 @@ export class OpenAIPolicy implements Policy {
   accounting() {
     return { calls: this.calls, unknownUsageCalls: this.unknownCalls, reportedTokens: { ...this.tokens },
       estimatedCostUsd: this.spentMicros / 1_000_000, maxCostUsd: this.config.maxCostUsd, maxCalls: this.config.maxCalls ?? 120,
-      maxOutputTokens: MAX_OUTPUT_TOKENS, rateCard: RATE_CARD };
+      maxOutputTokens: MAX_OUTPUT_TOKENS, rateCard: RATE_CARD, ...(this.outputShape ? { outputShape: structuredClone(this.outputShape) } : {}) };
   }
   async decide(input: PolicyInput, signal: AbortSignal): Promise<unknown> {
     if (this.stopped) throw new PolicyError(this.stopped);
@@ -46,7 +48,7 @@ export class OpenAIPolicy implements Policy {
     // UTF-8 bytes plus framing is a conservative estimate, not a provider-side billing limit.
     const reservation = costMicros(bytes + 2048, MAX_OUTPUT_TOKENS);
     if (this.spentMicros + reservation > Math.floor(this.config.maxCostUsd * 1_000_000)) throw new PolicyError('cost_budget');
-    this.spentMicros += reservation; this.calls++; this.busy = true;
+    this.spentMicros += reservation; this.calls++; this.busy = true; this.outputShape = undefined;
     let accounted = false;
     const timeout = AbortSignal.timeout(this.config.timeoutMs ?? 30_000);
     const combined = AbortSignal.any([signal, timeout]);
@@ -85,10 +87,21 @@ export class OpenAIPolicy implements Policy {
       if (content.some((item: any) => item?.type === 'refusal') || data.incomplete_details?.reason === 'content_filter') throw new PolicyError('provider_refused');
       if (data.status !== 'completed') throw new PolicyError('provider_incomplete');
       const texts = content.filter((item: any) => item?.type === 'output_text');
-      if (texts.length !== 1 || typeof texts[0].text !== 'string' || Buffer.byteLength(texts[0].text) > 16_384) throw new PolicyError('provider_invalid_decision');
+      this.outputShape = { textCount: texts.length };
+      if (texts.length !== 1) throw new PolicyError('provider_output_count');
+      if (typeof texts[0].text !== 'string') throw new PolicyError('provider_output_type');
+      this.outputShape.textBytes = Buffer.byteLength(texts[0].text);
+      if (Buffer.byteLength(texts[0].text) > 16_384) throw new PolicyError('provider_output_too_large');
       let envelope: any;
-      try { envelope = JSON.parse(texts[0].text); } catch { throw new PolicyError('provider_invalid_decision'); }
-      if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || Object.keys(envelope).length !== 1 || !Object.hasOwn(envelope, 'decision')) throw new PolicyError('provider_invalid_decision');
+      try { envelope = JSON.parse(texts[0].text); } catch { throw new PolicyError('provider_output_not_json'); }
+      this.outputShape.jsonKind = envelope === null ? 'null' : Array.isArray(envelope) ? 'array' : typeof envelope;
+      if (envelope && typeof envelope === 'object' && !Array.isArray(envelope)) {
+        const allowed = ['decision', 'version', 'kind', 'actor', 'observationId', 'targetId', 'value', 'option', 'routeRef', 'reason'];
+        this.outputShape.knownFields = allowed.filter(key => Object.hasOwn(envelope, key));
+        this.outputShape.unknownFields = Object.keys(envelope).length - this.outputShape.knownFields.length;
+        try { parseDecision(envelope); this.outputShape.validBareDecision = true; } catch { this.outputShape.validBareDecision = false; }
+      }
+      if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) || Object.keys(envelope).length !== 1 || !Object.hasOwn(envelope, 'decision')) throw new PolicyError('provider_output_envelope');
       // The runtime still validates the untrusted decision and counts invalid proposals.
       return envelope.decision;
     } catch (error) {

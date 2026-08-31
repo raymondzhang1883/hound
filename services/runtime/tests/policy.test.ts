@@ -64,6 +64,25 @@ it('unknown HTTP/network outcomes retain a charge estimate and never expose raw 
   }
 });
 
+it('identifies response-format failures without retaining raw output or dispatching a repair call', async () => {
+  for (const [content, code] of [
+    [[], 'provider_output_count'],
+    [[{ type: 'output_text', text: 42 }], 'provider_output_type'],
+    [[{ type: 'output_text', text: 'private-invalid-text' }], 'provider_output_not_json'],
+    [[{ type: 'output_text', text: JSON.stringify({ action: decision }) }], 'provider_output_envelope'],
+    [[{ type: 'output_text', text: 'x'.repeat(16_385) }], 'provider_output_too_large'],
+  ] as const) {
+    let calls = 0;
+    const policy = new OpenAIPolicy({ apiKey: 'test-key', maxCostUsd: 1, transport: async () => {
+      calls++; return Response.json(completed({ output: [{ type: 'message', content }] }));
+    } });
+    await assert.rejects(policy.decide(input(), signal()), new RegExp(code));
+    await assert.rejects(policy.decide(input(), signal()), new RegExp(code));
+    assert.equal(calls, 1); assert.equal(policy.accounting().unknownUsageCalls, 0);
+    assert.ok(policy.accounting().estimatedCostUsd > 0);
+  }
+});
+
 it('cancels a pending provider request and does not dispatch an already cancelled request', async () => {
   const controller = new AbortController(); let calls = 0;
   const policy = new OpenAIPolicy({ apiKey: 'test-key', maxCostUsd: 2, transport: async (_, init) => {
