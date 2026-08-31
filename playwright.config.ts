@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: '.',
-  testMatch: ['apps/fixture/tests/browser/**/*.spec.ts', 'services/runtime/tests/browser/**/*.spec.ts'],
+  testMatch: ['apps/fixture/tests/browser/**/*.spec.ts', 'services/runtime/tests/browser/**/*.spec.ts', 'generated-tests/**/*.spec.ts'],
   fullyParallel: false,
   workers: 1,
   retries: 0,

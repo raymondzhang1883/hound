@@ -14,6 +14,8 @@
     "test:runtime": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test services/runtime/tests/browser",
     "hunt": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers node --env-file-if-exists=.env --import tsx services/runtime/scripts/hunt.ts",
     "hunt:check": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test services/runtime/tests/browser/hunt.spec.ts",
+    "minimize": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers node --import tsx services/runtime/scripts/minimize.ts",
+    "test:generated": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test generated-tests",
     "check": "npm run typecheck && npm test && npm run test:browser",
     "fixture": "tsx apps/fixture/src/main.ts",
     "demo": "tsx apps/fixture/scripts/demo.ts"

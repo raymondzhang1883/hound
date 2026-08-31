@@ -167,7 +167,7 @@ export async function minimize(config: MinimizerConfig): Promise<MinimizationRes
   const result: MinimizationResult = { version: 1, outcome, ...(reason ? { reason } : {}), originalPlanId: config.plan.id,
     originalLength: config.plan.steps.length, minimizedLength: current.steps.length, deletionMinimal, ...(initialVerification ? { initialVerification } : {}), attempts, confirmations,
     elapsedMs: Date.now() - started, plan: current };
-  try { await emit('minimization_finished', { result }); }
+  try { const { plan: _plan, ...summary } = result; await emit('minimization_finished', { result: summary }); }
   catch { result.outcome = 'inconclusive'; result.reason = 'journal_failed'; result.deletionMinimal = false; }
   return result;
 }
