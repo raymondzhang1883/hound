@@ -63,6 +63,11 @@ test('replays one recorded browser plan on fresh correct and buggy deployments',
     expect(serialized).not.toContain(credentials.alice);
     expect(serialized).not.toContain(candidate.appUrl);
     await close(discovery);
+    const recorder = await open(candidate);
+    const recorded = await recorder.record(plan.steps.map(step => step.action), { actor: plan.probeActor, resourceRef: plan.probeResource });
+    expect(recorded).toMatchObject({ status: 'recorded', conclusion: { setupEquivalent: true, result: 'violation' } });
+    if (recorded.status === 'recorded') expect(recorded.plan.id).toBe(plan.id);
+    await close(recorder);
     const replay = (run: BrowserExperiment, label: string) => test.step(label, async () => {
       const started = performance.now();
       const result = await run.replay(plan);

@@ -22,6 +22,9 @@ export type RecordedAction =
   | { actor: Actor; kind: 'navigate'; routeRef: string };
 export interface RecordedStep { action: RecordedAction; before: TextTemplate; after: TextTemplate; http: TextTemplate }
 export interface ReplayPlan { version: 1; id: string; steps: RecordedStep[]; probeActor: Actor; probeResource: string }
+export type RecordResult =
+  | { status: 'recorded'; plan: ReplayPlan; conclusion: ReplayConclusion }
+  | { status: 'inconclusive'; reason: string; failedStep?: number };
 export type StepResult = { status: 'executed'; verdict: Verdict } | { status: 'rejected' | 'inconclusive' | 'stopped'; code: string };
 const actors = ['alice', 'bob'] as const;
 const planHash = (plan: Omit<ReplayPlan, 'id'>) => createHash('sha256').update(canonical(plan)).digest('hex');
@@ -186,6 +189,47 @@ export class BrowserExperiment {
     return { ...data, id: planHash(data) };
   }
 
+  private async decisionFor(action: RecordedAction): Promise<Decision> {
+    const view = this.views.get(action.actor) ?? reject('unknown_actor');
+    if ('recipe' in action) {
+      const observation = await view.snapshot();
+      const targetId = view.findRecipe(action.recipe);
+      const decision = { version: 1, ...action, observationId: observation.observationId, targetId } as Decision;
+      // Recipes are trusted runtime records, never part of a policy action's schema.
+      delete (decision as unknown as Record<string, unknown>).recipe;
+      return decision;
+    }
+    return { version: 1, ...action };
+  }
+
+  /** Re-records a reduced action sequence on fresh candidate state. */
+  async record(actions: RecordedAction[], expected: { actor: Actor; resourceRef: string }): Promise<RecordResult> {
+    if (this.records.length) return { status: 'inconclusive', reason: 'record_requires_fresh_execution' };
+    if (!actions.length || actions.length > 120) return { status: 'inconclusive', reason: 'invalid_record_actions' };
+    for (let index = 0; index < actions.length; index++) {
+      let decision: Decision;
+      try { decision = await this.decisionFor(actions[index]!); }
+      catch (error) { return { status: 'inconclusive', reason: error instanceof ContractError ? error.code : 'record_observation_failed', failedStep: index }; }
+      const result = await this.step(decision);
+      if (result.status !== 'executed') return { status: 'inconclusive', reason: result.code, failedStep: index };
+      if (index < actions.length - 1 && ['denied', 'violation'].includes(result.verdict.kind)) {
+        return { status: 'inconclusive', reason: 'record_probe_not_last', failedStep: index };
+      }
+      if (index === actions.length - 1 && result.verdict.kind !== 'violation') {
+        return { status: 'inconclusive', reason: 'record_candidate_violation_missing', failedStep: index };
+      }
+    }
+    let plan: ReplayPlan;
+    try { plan = this.plan(); } catch (error) {
+      return { status: 'inconclusive', reason: error instanceof ContractError ? error.code : 'record_plan_failed', failedStep: actions.length - 1 };
+    }
+    if (plan.probeActor !== expected.actor || plan.probeResource !== expected.resourceRef) {
+      return { status: 'inconclusive', reason: 'record_probe_mismatch', failedStep: actions.length - 1 };
+    }
+    return { status: 'recorded', plan, conclusion: { planId: plan.id, probeStep: plan.steps.length - 1, actor: plan.probeActor,
+      resourceRef: plan.probeResource, setupEquivalent: true, result: 'violation' } };
+  }
+
   async replay(plan: ReplayPlan): Promise<ReplayConclusion> {
     const conclusion: ReplayConclusion = { planId: plan.id, probeStep: plan.steps.length - 1, actor: plan.probeActor,
       resourceRef: plan.probeResource, setupEquivalent: false, result: 'inconclusive' };
@@ -195,19 +239,9 @@ export class BrowserExperiment {
     if (this.records.length) return failed('replay_requires_fresh_execution');
     for (let index = 0; index < plan.steps.length; index++) {
       const record = plan.steps[index]!;
-      const action = record.action;
-      const view = this.views.get(action.actor);
-      if (!view) return failed('unknown_actor', index);
       let decision: Decision;
-      try {
-        if ('recipe' in action) {
-          const observation = await view.snapshot();
-          const targetId = view.findRecipe(action.recipe);
-          decision = { version: 1, ...action, observationId: observation.observationId, targetId } as Decision;
-          // Recipes are trusted runtime records, never part of a policy action's schema.
-          delete (decision as unknown as Record<string, unknown>).recipe;
-        } else decision = { version: 1, ...action };
-      } catch (error) { return failed(error instanceof ContractError ? error.code : 'replay_observation_failed', index); }
+      try { decision = await this.decisionFor(record.action); }
+      catch (error) { return failed(error instanceof ContractError ? error.code : 'replay_observation_failed', index); }
       const result = await this.step(decision);
       if (result.status !== 'executed') return failed(result.code, index);
       const actual = this.records[index]!;
