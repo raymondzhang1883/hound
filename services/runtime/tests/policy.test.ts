@@ -83,6 +83,33 @@ it('identifies response-format failures without retaining raw output or dispatch
   }
 });
 
+it('uses the final answer phase without treating intermediate commentary as a decision', async () => {
+  const message = (phase: string, text: string) => ({ type: 'message', phase, status: 'completed', content: [{ type: 'output_text', text }] });
+  const final = message('final_answer', JSON.stringify({ decision }));
+  const commentary = message('commentary', 'private intermediate text');
+  for (const output of [[commentary, final], [final, commentary], [final]]) {
+    const policy = new OpenAIPolicy({ apiKey: 'test-key', maxCostUsd: 1, transport: transport(completed({ output })) });
+    assert.deepEqual(await policy.decide(input(), signal()), decision);
+    assert.equal(policy.accounting().outputShape?.phases.final_answer, 1);
+    assert.ok(!JSON.stringify(policy.accounting()).includes('private intermediate text'));
+  }
+  for (const [output, code] of [
+    [[final, final], 'provider_message_phase'],
+    [[commentary], 'provider_message_phase'],
+    [[message('private-unknown-phase', '{}'), final], 'provider_message_phase'],
+    [[...completed().output, final], 'provider_message_phase'],
+    [[{ ...final, status: 'incomplete' }], 'provider_incomplete'],
+    [[{ ...commentary, content: [{ type: 'refusal', refusal: 'private refusal' }] }, final], 'provider_refused'],
+  ] as const) {
+    let calls = 0;
+    const policy = new OpenAIPolicy({ apiKey: 'test-key', maxCostUsd: 1, transport: async () => { calls++; return Response.json(completed({ output })); } });
+    await assert.rejects(policy.decide(input(), signal()), new RegExp(code));
+    await assert.rejects(policy.decide(input(), signal()), new RegExp(code));
+    assert.equal(calls, 1);
+    assert.ok(!JSON.stringify(policy.accounting()).includes('private'));
+  }
+});
+
 it('cancels a pending provider request and does not dispatch an already cancelled request', async () => {
   const controller = new AbortController(); let calls = 0;
   const policy = new OpenAIPolicy({ apiKey: 'test-key', maxCostUsd: 2, transport: async (_, init) => {

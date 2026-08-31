@@ -20,7 +20,7 @@ export class OpenAIPolicy implements Policy {
   private tokens: TokenUsage = { inputTokens: 0, outputTokens: 0 };
   private stopped?: string;
   private busy = false;
-  private outputShape?: { textCount: number; textBytes?: number; jsonKind?: string; knownFields?: string[]; unknownFields?: number; validBareDecision?: boolean };
+  private outputShape?: { textCount: number; phases: { commentary: number; final_answer: number; unphased: number; other: number }; textBytes?: number; jsonKind?: string; knownFields?: string[]; unknownFields?: number; validBareDecision?: boolean };
   constructor(private readonly config: OpenAIConfig) {
     if (!config.apiKey.trim()) throw new PolicyError('missing_api_key');
     if (!Number.isFinite(config.maxCostUsd) || config.maxCostUsd <= 0 || config.maxCostUsd > 10) throw new PolicyError('invalid_cost_budget');
@@ -83,11 +83,24 @@ export class OpenAIPolicy implements Policy {
       if (!accounted) throw new PolicyError('provider_usage_unknown');
       if (data.model !== MODEL || (data.service_tier && data.service_tier !== 'default')) throw new PolicyError('provider_configuration_mismatch');
       if (!Array.isArray(data.output)) throw new PolicyError('provider_invalid_response');
-      const content = data.output.filter((item: any) => item?.type === 'message').flatMap((item: any) => Array.isArray(item.content) ? item.content : []);
+      const messages = data.output.filter((item: any) => item?.type === 'message');
+      const content = messages.flatMap((item: any) => Array.isArray(item.content) ? item.content : []);
       if (content.some((item: any) => item?.type === 'refusal') || data.incomplete_details?.reason === 'content_filter') throw new PolicyError('provider_refused');
       if (data.status !== 'completed') throw new PolicyError('provider_incomplete');
-      const texts = content.filter((item: any) => item?.type === 'output_text');
-      this.outputShape = { textCount: texts.length };
+      const phases = { commentary: 0, final_answer: 0, unphased: 0, other: 0 };
+      for (const message of messages) {
+        const phase: unknown = message.phase;
+        phases[phase === 'commentary' || phase === 'final_answer' ? phase : phase == null ? 'unphased' : 'other']++;
+      }
+      this.outputShape = { textCount: content.filter((item: any) => item?.type === 'output_text').length, phases };
+      // Responses may include intermediate commentary before the completed answer.
+      // Select by its documented phase, never by whichever text happens to parse.
+      const finals = messages.filter((item: any) => item.phase === 'final_answer');
+      const selected = phases.other === 0 && phases.unphased === 0 && finals.length === 1 ? finals[0] :
+        messages.length === 1 && phases.unphased === 1 ? messages[0] : undefined;
+      if (!selected) throw new PolicyError('provider_message_phase');
+      if (messages.some((item: any) => item.status != null && item.status !== 'completed')) throw new PolicyError('provider_incomplete');
+      const texts = Array.isArray(selected.content) ? selected.content.filter((item: any) => item?.type === 'output_text') : [];
       if (texts.length !== 1) throw new PolicyError('provider_output_count');
       if (typeof texts[0].text !== 'string') throw new PolicyError('provider_output_type');
       this.outputShape.textBytes = Buffer.byteLength(texts[0].text);
