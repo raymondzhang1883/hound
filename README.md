@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** a local fixture, isolated browser runtime, deterministic write verification, fresh-state paired replay, and a bounded naive-agent loop with an OpenAI adapter. The agent CLI is tested offline but has not made a live model call; autonomous discovery results are still pending. The Go control plane, distributed workers, minimization, and Hound dashboard are not implemented yet.
+**Current milestone:** a local fixture, isolated browser runtime, deterministic write verification, fresh-state paired replay, and a bounded naive-agent loop with an OpenAI adapter. The first live positive/negative pilot completed after adapter fixes, but the naive policy did not reach a valid write probe or discover the regression. See the pilot results, including all failed attempts and $0.281162 estimated total cost. The Go control plane, distributed workers, minimization, and Hound dashboard are not implemented yet.
 
 ## The first regression
 
@@ -59,7 +59,7 @@ The baseline shows `403`. The candidate saves the edit. Alice can open the docum
 
 ## Local agent pilot
 
-The initial policy uses **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff; actual discovery capability still needs a live pilot.
+The initial policy uses **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff. Live access and browser orchestration now work; reliable discovery is not demonstrated. In all six completed pilot trials, the policy removed Bob before establishing legitimate document access, then stopped without testing a write.
 
 ```sh
 npm run hunt -- --preflight
@@ -128,4 +128,4 @@ services/runtime/
   design-decisions/
 ```
 
-The browser contract and naive-agent integration are implemented with offline tests following an adversarial review. The next checkpoint is a locally configured API key and an explicitly budgeted live pilot; no live agent measurements exist yet. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+The browser contract and naive-agent integration are implemented following an adversarial review. The initial live pilot preserves the naive policy's failure to establish test preconditions. The next design checkpoint is improving exploration around that observed failure while keeping this baseline and evaluation protocol intact. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
