@@ -99,4 +99,4 @@ apps/fixture/
   design-decisions/
 ```
 
-The next design checkpoint is the browser action/observation contract and the first exploration baseline. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+The next design checkpoint is the proposed browser action/observation contract and early agent evaluation. These are review drafts, not implemented capabilities. Major subsystems are designed together before implementation. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
