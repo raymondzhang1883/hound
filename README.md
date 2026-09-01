@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. The executable CLI now lists and explains local runs and explicitly exports a self-contained example HTML finding report. See the causal pilot, minimization record, and CLI guide. Cumulative estimated model cost remains $0.532229; minimization, result inspection, and report export add no model calls. The Go control plane and distributed workers are not implemented yet.
+**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. The CLI now submits durable runs to a loopback Go/Postgres control plane, streams sanitized events by default, supports detached execution and cancellation, and uses a separately authenticated local browser worker. Completed worker journals remain compatible with `show`, minimization, and the secondary self-contained example HTML finding report. Two live control-plane smoke runs added $0.015702 in estimated model cost; cumulative estimated model cost is $0.547931.
 
 ## The first regression
 
@@ -23,7 +23,7 @@ These are expected behaviors verified by the fixture acceptance suite, not auton
 
 ## Run locally
 
-Requires Node.js 22 or later and npm. The commands below target macOS/Linux shells. No database, Docker, cloud account, or model API key is needed for this milestone.
+Requires Node.js 22 or later and npm. The commands below target macOS/Linux shells. The fixture and credential-free test suites need no database, Docker, cloud account, or model API key. Durable CLI runs additionally use Docker for the local control plane; only live model exploration needs an API key.
 
 ```sh
 npm ci
@@ -32,6 +32,16 @@ npm run check
 npm run demo
 ./hound --help
 ```
+
+Start the durable local control plane through Hound itself:
+
+```sh
+./hound control up
+./hound control status
+./hound hunt --preflight
+```
+
+`control up` creates owner-readable random credentials in the ignored `.hound/control-plane.env`, builds exact-digest Go and PostgreSQL images, and publishes only the control API on loopback. PostgreSQL is not published. `control down` stops the containers and retains the database volume.
 
 The demo launches two independent processes and starts a fresh execution in each:
 
@@ -67,16 +77,18 @@ The initial model is **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with 
 npm run hunt:check
 ```
 
-The readiness check makes no network requests. `hunt:check` runs the complete controller and real fixture browsers with simulated provider responses and an authored test sequence. It verifies a candidate-only result, the both-correct control, and cancellation. It is not an autonomous-discovery benchmark. Add `-- --headed` to watch it.
+The readiness check makes one loopback health request and no provider request. `hunt:check` runs the complete controller and real fixture browsers with simulated provider responses and an authored test sequence. It verifies a candidate-only result, the both-correct control, and cancellation. It is not an autonomous-discovery benchmark. Add `-- --headed` to watch it.
 
-For live exploration, configure `OPENAI_API_KEY` in the ignored project `.env` file, then explicitly supply a dollar budget:
+For live exploration, configure `OPENAI_API_KEY` in the ignored project `.env` file. Start a worker in one terminal, then submit from another with an explicit dollar budget:
 
 ```sh
+./hound worker
+# another terminal
 ./hound hunt --case positive --max-cost-usd 1
 ./hound hunt --case negative --max-cost-usd 1
 ```
 
-Each command has a separate estimated spend allowance; the example allocates $2 across the two pilots. Costs depend on actual tokens. No automatic provider retries or model fallback occur. Each run creates its own loopback fixtures and private records under `.hound/runs/`; it does not borrow the interactive demo. A nondetection is never called a security pass. See the agent setup and results guide before running a paid pilot.
+Each command has a separate estimated spend allowance; the example allocates $2 across the two pilots. Costs depend on actual tokens. No automatic provider retries or model fallback occur. `hunt` streams until terminal by default; `--detach` prints the durable run ID and returns. `status`, `logs`, and `cancel` operate on that ID. Each worker attempt creates fresh loopback fixtures and private records under `.hound/runs/`; it does not borrow the interactive demo. `./hound hunt --local ...` retains the direct development runner. A nondetection is never called a security pass. See the agent setup and results guide before running a paid pilot.
 
 ## Minimize and export a finding
 
@@ -97,6 +109,9 @@ The CLI is Hound's primary interface. It owns execution, terminal status, machin
 ```sh
 ./hound runs
 ./hound runs --json | jq '.[0]'
+./hound status <run-id>
+./hound logs <run-id> --follow
+./hound cancel <run-id>
 ./hound show --run-id <run-id>
 ./hound report --run-id <run-id>
 ```
@@ -110,8 +125,11 @@ npm run typecheck
 npm test
 npm run test:browser
 npm run test:runtime
+npm run test:control
 npm run test:browser -- --repeat-each=3
 ```
+
+`test:control` requires `./hound control up`; it exercises durable creation, concurrent leasing, heartbeat, idempotent events, cancellation, stale-worker fencing, retry exhaustion, and SSE replay without a browser or provider call.
 
 The state and HTTP tests cover the seeded behavior, session/workspace isolation, member administration boundaries, invitation reuse, conflicting edits, harness authentication, competing execution acquisition, and a request that spans a reset.
 
@@ -144,9 +162,13 @@ apps/fixture/
   scripts/         Two-process local demo launcher
   tests/           State, HTTP, and Playwright acceptance checks
 services/runtime/
-  src/             Browser execution, oracle/replay, minimizer/exporter, provider policy, controller, journal
-  scripts/         Bounded local agent and minimizer CLIs
+  src/             Browser execution, control client, oracle/replay, minimizer/exporter, provider policy, journal
+  scripts/         Primary CLI control client, local worker, direct runner, minimizer, report export
   tests/           Pure checks and local browser integration tests
+services/control-plane/
+  main.go          Durable versioned run, lease, event, cancellation, and completion API
+  migrations/      PostgreSQL lifecycle schema
+deploy/local/      Exact-digest loopback Docker Compose stack
 generated-tests/   Model-free Playwright regressions emitted from confirmed plans
   project-brief.md  Product direction and phased build brief
   fixture.md       How to run, reset, and integrate the benchmark target

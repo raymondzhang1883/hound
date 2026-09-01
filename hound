@@ -6,7 +6,23 @@ case "${1:-}" in
   hunt)
     shift
     export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
-    exec node --env-file-if-exists="$HOUND_ROOT/.env" --import tsx "$HOUND_ROOT/services/runtime/scripts/hunt.ts" "$@"
+    if [ "${1:-}" = "--local" ]; then
+      shift
+      exec node --env-file-if-exists="$HOUND_ROOT/.env" --import tsx "$HOUND_ROOT/services/runtime/scripts/hunt.ts" "$@"
+    fi
+    exec node --env-file-if-exists="$HOUND_ROOT/.env" --import tsx "$HOUND_ROOT/services/runtime/scripts/control.ts" hunt "$@"
+    ;;
+  worker)
+    shift
+    export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
+    exec node --env-file-if-exists="$HOUND_ROOT/.env" --import tsx "$HOUND_ROOT/services/runtime/scripts/worker.ts" "$@"
+    ;;
+  control)
+    shift
+    exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/control-stack.ts" "$@"
+    ;;
+  status|logs|cancel)
+    exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/control.ts" "$@"
     ;;
   minimize)
     shift

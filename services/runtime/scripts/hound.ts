@@ -11,13 +11,20 @@ const minimizationRoot = join(root, '.hound/minimizations');
 const help = `Hound CLI (terminal-first local interface)
 
   ./hound hunt --preflight
-  ./hound hunt --case positive|negative --max-cost-usd <amount>
+  ./hound hunt --case positive|negative --max-cost-usd <amount> [--detach]
+  ./hound worker [--once]
+  ./hound control up|status|logs|down
+  ./hound status <run-id> [--json]
+  ./hound logs <run-id> [--follow]
+  ./hound cancel <run-id>
+  ./hound hunt --local --case positive|negative --max-cost-usd <amount>
   ./hound minimize --run-id <confirmed-positive-id>
   ./hound runs [--json] [--limit <1..100>]
   ./hound show --run-id <id> [--json]
   ./hound report --run-id <id> [--output <workspace-relative.html>]
 
-hunt executes a bounded local exploration; minimize uses fresh deterministic fixture pairs.
+hunt submits a durable run and streams it; worker executes owned fixture jobs. --local retains
+the direct development runner. minimize uses fresh deterministic fixture pairs.
 runs and show print sanitized results. report explicitly creates a static, self-contained
 HTML artifact. Read-only commands launch no browser, fixture, or model. Existing npm scripts
 remain compatibility aliases.

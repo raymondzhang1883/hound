@@ -7,8 +7,12 @@ export class RunJournal {
   private sequence = 0;
   private constructor(readonly directory: string, private readonly secrets: string[]) {}
   static async create(parent: string, secrets: string[]) {
+    return this.createNamed(parent, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`, secrets);
+  }
+  static async createNamed(parent: string, runId: string, secrets: string[]) {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-[0-9a-f-]{36}$/.test(runId)) throw new Error('invalid_run_id');
     await mkdir(parent, { recursive: true, mode: 0o700 });
-    const directory = join(parent, `${new Date().toISOString().replaceAll(':', '-')}-${randomUUID()}`);
+    const directory = join(parent, runId);
     await mkdir(directory, { mode: 0o700 });
     return new RunJournal(directory, secrets.filter(Boolean));
   }
