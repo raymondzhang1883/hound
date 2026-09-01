@@ -15,6 +15,7 @@
     "setup:browser": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright install chromium",
     "test:browser": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test",
     "test:runtime": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test services/runtime/tests/browser",
+    "test:control": "node services/control-plane/tests/lifecycle.mjs",
     "hunt": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers node --env-file-if-exists=.env --import tsx services/runtime/scripts/hunt.ts",
     "hunt:check": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test services/runtime/tests/browser/hunt.spec.ts",
     "hound": "./hound",

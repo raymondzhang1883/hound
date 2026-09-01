@@ -1,0 +1,39 @@
+name: hound-local
+
+services:
+  postgres:
+    image: postgres:18.6-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    environment:
+      POSTGRES_DB: hound
+      POSTGRES_USER: hound
+      POSTGRES_PASSWORD: ${HOUND_POSTGRES_PASSWORD:?set HOUND_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hound -d hound"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    volumes:
+      - hound-postgres:/var/lib/postgresql
+
+  control-plane:
+    build:
+      context: ../..
+      dockerfile: services/control-plane/Dockerfile
+    environment:
+      HOUND_DATABASE_URL: postgres://hound:${HOUND_POSTGRES_PASSWORD}@postgres:5432/hound?sslmode=disable
+      HOUND_WORKER_KEY: ${HOUND_WORKER_KEY:?set HOUND_WORKER_KEY}
+      HOUND_LISTEN_ADDR: :8090
+      HOUND_LEASE_DURATION: ${HOUND_LEASE_DURATION:-30s}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${HOUND_CONTROL_PORT:-8090}:8090"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  hound-postgres:
