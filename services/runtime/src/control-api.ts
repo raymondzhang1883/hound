@@ -64,6 +64,7 @@ export class ControlApi {
   createRun(input: { case: string; maxCostUsd: number; maxTrials: number }) {
     return this.request<ControlRun>('/v1/runs', { method: 'POST', expected: [201], body: JSON.stringify(input) });
   }
+  runs(limit: number) { return this.request<{ runs: ControlRun[] }>(`/v1/runs?limit=${limit}`); }
   run(id: string) { return this.request<ControlRun>(`/v1/runs/${encodeURIComponent(id)}`); }
   cancel(id: string) { return this.request<{ status: string }>(`/v1/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
 }

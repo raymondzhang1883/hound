@@ -191,6 +191,9 @@ assert.equal(streamResponse.status, 200);
 const streamText = await streamResponse.text();
 assert.match(streamText, new RegExp(`id: ${streamEvent.sequence}\\nevent: run_progress\\n`));
 assert.match(streamText, /data: \{"sequence":/);
+const recentRuns = await request('/v1/runs?limit=10');
+assert.ok(recentRuns.runs.some((item) => item.id === streamRun.id));
+await request('/v1/runs?limit=0', { expected: 400 });
 
 console.log(JSON.stringify({
   status: "passed",

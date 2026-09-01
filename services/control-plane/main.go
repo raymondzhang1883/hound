@@ -233,6 +233,25 @@ func (s *store) getRun(ctx context.Context, id string) (run, error) {
 	return r, err
 }
 
+func (s *store) listRuns(ctx context.Context, limit int) ([]run, error) {
+	rows, err := s.pool.Query(ctx, `SELECT r.id,r.case_name,r.max_cost_usd::float8,r.max_trials,r.status,r.outcome,r.reason,r.created_at,r.started_at,r.finished_at,
+		j.id,j.status,j.attempt,j.max_attempts,j.lease_epoch,j.lease_owner,j.lease_expires_at FROM runs r JOIN jobs j ON j.run_id=r.id ORDER BY r.created_at DESC,r.id DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []run{}
+	for rows.Next() {
+		var r run
+		if err = rows.Scan(&r.ID, &r.Case, &r.MaxCostUSD, &r.MaxTrials, &r.Status, &r.Outcome, &r.Reason, &r.CreatedAt, &r.StartedAt, &r.FinishedAt,
+			&r.Job.ID, &r.Job.Status, &r.Job.Attempt, &r.Job.MaxAttempts, &r.Job.LeaseEpoch, &r.Job.LeaseOwner, &r.Job.LeaseExpiresAt); err != nil {
+			return nil, err
+		}
+		items = append(items, r)
+	}
+	return items, rows.Err()
+}
+
 func (s *store) lease(ctx context.Context, owner string) (*lease, error) {
 	token, hash, err := leaseToken()
 	if err != nil {
@@ -522,6 +541,23 @@ func (s *server) routes() http.Handler {
 			return
 		}
 		respond(w, 201, item)
+	})
+	mux.HandleFunc("GET /v1/runs", func(w http.ResponseWriter, r *http.Request) {
+		limit := 20
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			value, err := strconv.Atoi(raw)
+			if err != nil || value < 1 || value > 100 {
+				problem(w, 400, "invalid_limit")
+				return
+			}
+			limit = value
+		}
+		items, err := s.store.listRuns(r.Context(), limit)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		respond(w, 200, map[string]any{"runs": items})
 	})
 	mux.HandleFunc("GET /v1/runs/{runID}", func(w http.ResponseWriter, r *http.Request) {
 		item, err := s.store.getRun(r.Context(), r.PathValue("runID"))

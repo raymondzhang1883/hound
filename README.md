@@ -109,6 +109,7 @@ The CLI is Hound's primary interface. It owns execution, terminal status, machin
 ```sh
 ./hound runs
 ./hound runs --json | jq '.[0]'
+./hound runs --local
 ./hound status <run-id>
 ./hound logs <run-id> --follow
 ./hound cancel <run-id>

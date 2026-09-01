@@ -11,6 +11,7 @@ const help = `Hound durable control client
 
   ./hound hunt --case positive|negative --max-cost-usd <amount> [--trials 1..3] [--detach [--json]]
   ./hound hunt --preflight
+  ./hound runs [--limit 20] [--json]
   ./hound status <run-id> [--json]
   ./hound logs <run-id> [--follow] [--after <sequence>]
   ./hound cancel <run-id>
@@ -105,6 +106,17 @@ async function main() {
   }
   const environment = await controlEnvironment(root);
   const api = new ControlApi(environment.baseURL);
+  if (command === 'runs') {
+    const args = parseArgs({ args: rest, options: { json: { type: 'boolean' }, limit: { type: 'string' } }, strict: true });
+    const limit = args.values.limit === undefined ? 20 : Number(args.values.limit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new ControlError('invalid_limit');
+    const runs = (await api.runs(limit))?.runs ?? [];
+    if (args.values.json) { console.log(JSON.stringify(runs, null, 2)); return; }
+    if (!runs.length) { console.log('No durable runs.'); return; }
+    console.log('RUN ID'.padEnd(64) + 'STATE'.padEnd(12) + 'OUTCOME');
+    for (const run of runs) console.log(run.id.padEnd(64) + run.status.padEnd(12) + (run.outcome ?? run.reason ?? '—'));
+    return;
+  }
   if (command === 'status') {
     const args = parseArgs({ args: rest, options: { json: { type: 'boolean' } }, allowPositionals: true, strict: true });
     const run = await api.run(runIdFrom(args.positionals));

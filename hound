@@ -24,6 +24,14 @@ case "${1:-}" in
   status|logs|cancel)
     exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/control.ts" "$@"
     ;;
+  runs)
+    shift
+    if [ "${1:-}" = "--local" ]; then
+      shift
+      exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/hound.ts" runs "$@"
+    fi
+    exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/control.ts" runs "$@"
+    ;;
   minimize)
     shift
     export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"

@@ -20,6 +20,7 @@ const help = `Hound CLI (terminal-first local interface)
   ./hound hunt --local --case positive|negative --max-cost-usd <amount>
   ./hound minimize --run-id <confirmed-positive-id>
   ./hound runs [--json] [--limit <1..100>]
+  ./hound runs --local [--json] [--limit <1..100>]
   ./hound show --run-id <id> [--json]
   ./hound report --run-id <id> [--output <workspace-relative.html>]
 
