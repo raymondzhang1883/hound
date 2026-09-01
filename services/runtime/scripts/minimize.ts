@@ -3,11 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { lstat, mkdir, open, readFile, rename } from 'node:fs/promises';
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium, type Browser } from '@playwright/test';
-import { startFixture } from '../../../apps/fixture/src/server.js';
-import { BrowserExperiment, type ReplayPlan } from '../src/experiment.js';
+import type { ReplayPlan } from '../src/experiment.js';
+import { fieldnotesAdapter } from '../src/fieldnotes-adapter.js';
 import { minimize, type MinimizationResult } from '../src/minimizer.js';
 import { exportPlaywrightRegression } from '../src/exporter.js';
 import { RunJournal } from '../src/journal.js';
@@ -88,9 +88,8 @@ async function main() {
       durable = { api, workerKey: environment.workerKey, report };
     } catch { console.error('The durable run is missing a verified candidate-only result and exact replay artifact.'); process.exitCode = 2; return; }
   }
-  const credentials = { alice: `alice-${randomBytes(24).toString('hex')}`, bob: `bob-${randomBytes(24).toString('hex')}` };
-  const keys = { baseline: randomBytes(32).toString('hex'), candidate: randomBytes(32).toString('hex') };
-  const journal = await RunJournal.create(join(root, '.hound/minimizations'), [...Object.values(credentials), ...Object.values(keys)]);
+  const applicationSession = fieldnotesAdapter.createSession();
+  const journal = await RunJournal.create(join(root, '.hound/minimizations'), applicationSession.secrets);
   let revision = 'unknown';
   try { revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { /* Source archives need not have Git metadata. */ }
   await journal.write('config', { version: 1, revision, sourceRunId: runId, sourcePlanId: plan.id, originalLength: plan.steps.length,
@@ -99,15 +98,13 @@ async function main() {
   console.log(`Private minimization records: ${journal.directory}`);
   const controller = new AbortController(); const interrupt = () => controller.abort();
   process.once('SIGINT', interrupt); process.once('SIGTERM', interrupt);
-  let baseline: Awaited<ReturnType<typeof startFixture>> | undefined; let candidate: typeof baseline; let browser: Browser | undefined;
+  let browser: Browser | undefined;
   let result: MinimizationResult | undefined; let failure: string | undefined;
   try {
-    baseline = await startFixture({ mode: 'baseline', credentials, harnessKey: keys.baseline });
-    candidate = await startFixture({ mode: 'stale-write', credentials, harnessKey: keys.candidate });
+    await applicationSession.start('positive');
     browser = await chromium.launch({ headless: !args.values.headed, ...(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH } : {}) });
     result = await minimize({ plan, signal: controller.signal, confirmations,
-      factory: { open: (target, options) => BrowserExperiment.open(browser!, { ...(target === 'baseline' ? baseline! : candidate!),
-        harnessKey: keys[target], credentials, ...options }) },
+      factory: { open: (target, options) => applicationSession.open(target, browser!, options) },
       emit: async event => {
         await journal.append(event);
         if (event.type === 'reduction_attempt') {
@@ -120,7 +117,7 @@ async function main() {
       } });
   } catch { failure = 'minimizer_setup_failed'; }
   finally {
-    const cleanup = await Promise.allSettled([browser?.close(), baseline?.close(), candidate?.close()]);
+    const cleanup = await Promise.allSettled([browser?.close(), applicationSession.close()]);
     if (cleanup.some(item => item.status === 'rejected')) failure = 'cleanup_failed';
     process.removeListener('SIGINT', interrupt); process.removeListener('SIGTERM', interrupt);
   }
@@ -135,7 +132,7 @@ async function main() {
   if (verified) {
     try {
       const source = exportPlaywrightRegression(result.plan);
-      for (const secret of [...Object.values(credentials), ...Object.values(keys), directory, journal.directory]) if (source.includes(secret)) throw new Error('secret_in_generated_test');
+      for (const secret of [...applicationSession.secrets, directory, journal.directory]) if (source.includes(secret)) throw new Error('secret_in_generated_test');
       await journal.write('plan', result.plan);
       const output = join(root, 'generated-tests/removed-member-write.spec.ts');
       await atomicSource(output, source);

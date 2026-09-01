@@ -8,6 +8,7 @@ import { BrowserExperiment } from '../../src/experiment.js';
 import { runHunt } from '../../src/hunt.js';
 import { RunJournal } from '../../src/journal.js';
 import { createDemoPolicy } from '../../src/demo-policy.js';
+import { executeLocalHunt } from '../../src/local-runner.js';
 
 for (const scenario of ['positive', 'negative'] as const) {
   test(`offline ${scenario}: simulated provider wire format drives the real controller and fixture browsers`, async ({ browser }) => {
@@ -52,6 +53,24 @@ for (const scenario of ['positive', 'negative'] as const) {
     } finally { await Promise.all([baseline.close(), candidate.close()]); }
   });
 }
+
+test('the local runner reaches a confirmed result through the default application adapter', async () => {
+  test.setTimeout(60_000);
+  const demo = createDemoPolicy();
+  const execution = await executeLocalHunt({
+    root: test.info().outputPath('adapter-workspace'),
+    policy: demo.policy,
+    policySecrets: demo.secrets,
+    caseName: 'positive',
+    maxCostUsd: 2,
+    maxTrials: 1,
+  });
+  expect(execution.failure).toBeUndefined();
+  expect(execution.result?.outcome).toBe('candidate_only_violation');
+  expect(execution.projection?.finding.confirmed).toBe(true);
+  expect(execution.projection?.exploration.policy.simulated).toBe(true);
+  expect(demo.policy.accounting().actualModelRequests).toBe(0);
+});
 
 test('cancelling during policy selection closes live actor browsers and releases the fixture', async ({ browser }) => {
   const credentials = { alice: 'cancel-test-alice', bob: 'cancel-test-bob' };
