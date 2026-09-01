@@ -46,16 +46,24 @@ async function lease(workerId, expected = 200) {
   });
 }
 
-async function leaseMaybe(workerId) {
+async function leaseMaybe(workerId, runId) {
   const response = await fetch(`${baseURL}/v1/jobs/lease`, {
     method: "POST",
     headers: { "content-type": "application/json", "X-Hound-Worker-Key": workerKey },
-    body: JSON.stringify({ workerId }),
+    body: JSON.stringify({ workerId, ...(runId ? { runId } : {}) }),
   });
   if (response.status === 204) return undefined;
   const text = await response.text();
   assert.equal(response.status, 200, `POST /v1/jobs/lease: ${response.status} ${text}`);
   return JSON.parse(text);
+}
+
+async function leaseSpecific(runId, workerId) {
+  return request("/v1/jobs/lease", {
+    method: "POST",
+    headers: { "X-Hound-Worker-Key": workerKey },
+    body: JSON.stringify({ workerId, runId }),
+  });
 }
 
 async function leaseForRun(runId, workerId) {
@@ -238,6 +246,16 @@ const cancelled = await request(`/v1/runs/${cancelledRun.id}`);
 assert.equal(cancelled.status, "cancelled");
 assert.equal(cancelled.outcome, "cancelled");
 
+const targetedRuns = await Promise.all([createRun(), createRun("negative")]);
+const targetedLease = await leaseSpecific(targetedRuns[1].id, "integration-targeted");
+assert.equal(targetedLease.runId, targetedRuns[1].id, "a targeted lease must claim only the requested run");
+await start(targetedLease);
+await complete(targetedLease, { state: "failed", outcome: "", reason: "integration_cleanup" });
+const otherTargetedLease = await leaseSpecific(targetedRuns[0].id, "integration-targeted-other");
+assert.equal(otherTargetedLease.runId, targetedRuns[0].id);
+await start(otherTargetedLease);
+await complete(otherTargetedLease, { state: "failed", outcome: "", reason: "integration_cleanup" });
+
 const parallelRuns = await Promise.all([createRun(), createRun("negative")]);
 const parallelLeases = await Promise.all([lease("integration-parallel-a"), lease("integration-parallel-b")]);
 assert.equal(new Set(parallelLeases.map((item) => item.runId)).size, 2, "parallel claims must lease distinct jobs");
@@ -256,7 +274,12 @@ staleProjection.exploration.planId = stalePlan.id;
 await uploadResult(staleLease, staleProjection);
 await request(`/v1/runs/${retryRun.id}/result`, { expected: 404 });
 await waitForLeaseExpiry(staleLease);
-const retryLease = await lease("integration-expiry-b");
+let retryLease;
+for (let index = 0; index < 20 && !retryLease; index += 1) {
+  retryLease = await leaseMaybe(`integration-expiry-b-${index}`, retryRun.id);
+  if (!retryLease) await new Promise((resolve) => setTimeout(resolve, 100));
+}
+assert.ok(retryLease, "expired lease must become available for its final attempt");
 assert.equal(retryLease.runId, retryRun.id);
 assert.equal(retryLease.attempt, 2);
 assert.ok(retryLease.leaseEpoch > staleLease.leaseEpoch);

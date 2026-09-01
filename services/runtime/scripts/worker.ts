@@ -4,6 +4,7 @@ import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { ControlApi, ControlError, controlEnvironment, leaseHeaders, type ControlLease } from '../src/control-api.js';
+import { controlEventSummary } from '../src/control-events.js';
 import { executeLocalHunt } from '../src/local-runner.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -16,25 +17,6 @@ const help = `Hound local worker (owned fixture jobs only)
 The worker leases durable jobs, runs fresh loopback fixture pairs, and heartbeats its lease.
 It requires OPENAI_API_KEY plus the ignored .hound/control-plane.env worker credential.
 `;
-
-function summary(event: { type: string; [key: string]: unknown }) {
-  const trial = Number(event.trial ?? event.index) + 1;
-  const step = Number(event.step) + 1;
-  const summaries: Record<string, string> = {
-    hunt_started: 'Hunt execution started on fresh owned fixtures',
-    trial_started: `Trial ${trial} started`,
-    observation: `Trial ${trial} observed isolated actor pages for decision ${step}`,
-    provider_completed: `Trial ${trial} model decision ${step} completed`,
-    provider_stopped: `Trial ${trial} model stopped with ${String(event.code ?? 'unknown').slice(0, 80)}`,
-    decision: `Trial ${trial} decision ${step}: ${String(event.status ?? 'unknown').slice(0, 40)}`,
-    suspicion: `Trial ${trial} produced a deterministic suspicion; paired replay will verify it`,
-    trial_finished: `Trial ${trial} finished: ${String(event.reason ?? 'complete').slice(0, 80)}`,
-    replay_started: `Fresh ${String(event.target ?? 'unknown').slice(0, 20)} replay started`,
-    replay_finished: `Fresh ${String(event.target ?? 'unknown').slice(0, 20)} replay finished`,
-    hunt_finished: `Hunt finished: ${String((event.result as any)?.outcome ?? 'unknown').slice(0, 80)}`,
-  };
-  return summaries[event.type];
-}
 
 async function processLease(api: ControlApi, lease: ControlLease, apiKey: string, headed: boolean, globalSignal: AbortSignal) {
   const headers = leaseHeaders(lease);
@@ -57,7 +39,7 @@ async function processLease(api: ControlApi, lease: ControlLease, apiKey: string
   })();
   let sequence = 0;
   const sendEvent = async (event: { type: string; at: string; [key: string]: unknown }) => {
-    const text = summary(event); if (!text) return;
+    const text = controlEventSummary(event); if (!text) return;
     const workerEventId = `event-${lease.attempt}-${sequence++}`;
     try {
       await api.request(`/v1/jobs/${lease.jobId}/events`, { method: 'POST', headers,

@@ -47,6 +47,7 @@ var (
 	hashPattern      = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	labelPattern     = regexp.MustCompile(`^[A-Za-z0-9._@/+:-]{1,100}$`)
 	revisionPattern  = regexp.MustCompile(`^(?:[0-9a-f]{7,40}|unknown)$`)
+	runIDPattern     = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
 )
 
 type config struct {
@@ -455,7 +456,7 @@ func (s *store) listRuns(ctx context.Context, limit int) ([]run, error) {
 	return items, rows.Err()
 }
 
-func (s *store) lease(ctx context.Context, owner string) (*lease, error) {
+func (s *store) lease(ctx context.Context, owner, preferredRunID string) (*lease, error) {
 	token, hash, err := leaseToken()
 	if err != nil {
 		return nil, err
@@ -473,8 +474,8 @@ func (s *store) lease(ctx context.Context, owner string) (*lease, error) {
 	}
 	var item lease
 	err = tx.QueryRow(ctx, `SELECT j.id,j.run_id,j.attempt+1,j.lease_epoch+1,r.case_name,r.max_cost_usd::float8,r.max_trials
-		FROM jobs j JOIN runs r ON r.id=j.run_id WHERE j.status='queued' OR (j.status IN ('leased','running') AND j.lease_expires_at<=now() AND j.attempt<j.max_attempts)
-		ORDER BY j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1`).Scan(&item.JobID, &item.RunID, &item.Attempt, &item.LeaseEpoch, &item.Case, &item.MaxCostUSD, &item.MaxTrials)
+		FROM jobs j JOIN runs r ON r.id=j.run_id WHERE ($1='' OR j.run_id=$1) AND (j.status='queued' OR (j.status IN ('leased','running') AND j.lease_expires_at<=now() AND j.attempt<j.max_attempts))
+		ORDER BY j.created_at,j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1`, preferredRunID).Scan(&item.JobID, &item.RunID, &item.Attempt, &item.LeaseEpoch, &item.Case, &item.MaxCostUSD, &item.MaxTrials)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if err = tx.Commit(ctx); err != nil {
 			return nil, err
@@ -1238,12 +1239,13 @@ func (s *server) routes() http.Handler {
 		}
 		var input struct {
 			WorkerID string `json:"workerId"`
+			RunID    string `json:"runId"`
 		}
-		if decode(w, r, &input) != nil || !workerIDPattern.MatchString(input.WorkerID) {
+		if decode(w, r, &input) != nil || !workerIDPattern.MatchString(input.WorkerID) || (input.RunID != "" && !runIDPattern.MatchString(input.RunID)) {
 			problem(w, 422, "invalid_worker")
 			return
 		}
-		item, err := s.store.lease(r.Context(), input.WorkerID)
+		item, err := s.store.lease(r.Context(), input.WorkerID, input.RunID)
 		if err != nil {
 			s.fail(w, err)
 			return

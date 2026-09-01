@@ -24,7 +24,8 @@
     "test:generated": "PLAYWRIGHT_BROWSERS_PATH=.hound/browsers playwright test generated-tests",
     "check": "npm run typecheck && npm test && npm run test:browser",
     "fixture": "tsx apps/fixture/src/main.ts",
-    "demo": "tsx apps/fixture/scripts/demo.ts"
+    "demo": "./hound demo",
+    "fixture:demo": "tsx apps/fixture/scripts/demo.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",

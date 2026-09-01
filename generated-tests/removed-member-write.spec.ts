@@ -22,7 +22,7 @@ const plan: ReplayPlan = {
           ]
         },
         "value": {
-          "literal": "Team Alpha"
+          "ref": "trial_text"
         }
       },
       "before": [
@@ -86,7 +86,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -141,7 +147,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -182,7 +194,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -203,10 +221,10 @@ const plan: ReplayPlan = {
         "kind": "click",
         "recipe": {
           "by": "role",
-          "role": "link",
+          "role": "button",
           "name": [
             {
-              "literal": "Workspaces"
+              "literal": "Refresh"
             }
           ]
         }
@@ -249,7 +267,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -290,7 +314,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -351,7 +381,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -398,7 +434,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -415,126 +457,6 @@ const plan: ReplayPlan = {
     },
     {
       "action": {
-        "actor": "alice",
-        "kind": "click",
-        "recipe": {
-          "by": "role",
-          "role": "link",
-          "name": [
-            {
-              "literal": "TEAM NOTEBOOK Shared document Ideas, plans, and a little room to think. Open document"
-            }
-          ]
-        }
-      },
-      "before": [
-        {
-          "literal": "{\"documents\":[{\"body\":\"A shared place for the next big idea.\",\"id\":\""
-        },
-        {
-          "ref": "document_1"
-        },
-        {
-          "literal": "\",\"revision\":1,\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"invitations\":[{\"id\":\""
-        },
-        {
-          "ref": "invitation_1"
-        },
-        {
-          "literal": "\",\"recipient\":\"bob\",\"status\":\"accepted\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"memberships\":[{\"actorKey\":\"alice\",\"role\":\"admin\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"},{\"actorKey\":\"bob\",\"role\":\"member\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"users\":[{\"actorKey\":\"alice\",\"displayName\":\"Alice\"},{\"actorKey\":\"bob\",\"displayName\":\"Bob\"}],\"workspaces\":[{\"id\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
-        }
-      ],
-      "after": [
-        {
-          "literal": "{\"documents\":[{\"body\":\"A shared place for the next big idea.\",\"id\":\""
-        },
-        {
-          "ref": "document_1"
-        },
-        {
-          "literal": "\",\"revision\":1,\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"invitations\":[{\"id\":\""
-        },
-        {
-          "ref": "invitation_1"
-        },
-        {
-          "literal": "\",\"recipient\":\"bob\",\"status\":\"accepted\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"memberships\":[{\"actorKey\":\"alice\",\"role\":\"admin\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"},{\"actorKey\":\"bob\",\"role\":\"member\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"users\":[{\"actorKey\":\"alice\",\"displayName\":\"Alice\"},{\"actorKey\":\"bob\",\"displayName\":\"Bob\"}],\"workspaces\":[{\"id\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
-        }
-      ],
-      "http": [
-        {
-          "literal": "[{\"method\":\"GET\",\"path\":\"/api/documents/"
-        },
-        {
-          "ref": "document_1"
-        },
-        {
-          "literal": "\",\"status\":200}]"
-        }
-      ]
-    },
-    {
-      "action": {
         "actor": "bob",
         "kind": "click",
         "recipe": {
@@ -542,127 +464,10 @@ const plan: ReplayPlan = {
           "role": "link",
           "name": [
             {
-              "literal": "Team Alpha Open workspace"
-            }
-          ]
-        }
-      },
-      "before": [
-        {
-          "literal": "{\"documents\":[{\"body\":\"A shared place for the next big idea.\",\"id\":\""
-        },
-        {
-          "ref": "document_1"
-        },
-        {
-          "literal": "\",\"revision\":1,\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"invitations\":[{\"id\":\""
-        },
-        {
-          "ref": "invitation_1"
-        },
-        {
-          "literal": "\",\"recipient\":\"bob\",\"status\":\"accepted\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"memberships\":[{\"actorKey\":\"alice\",\"role\":\"admin\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"},{\"actorKey\":\"bob\",\"role\":\"member\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"users\":[{\"actorKey\":\"alice\",\"displayName\":\"Alice\"},{\"actorKey\":\"bob\",\"displayName\":\"Bob\"}],\"workspaces\":[{\"id\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
-        }
-      ],
-      "after": [
-        {
-          "literal": "{\"documents\":[{\"body\":\"A shared place for the next big idea.\",\"id\":\""
-        },
-        {
-          "ref": "document_1"
-        },
-        {
-          "literal": "\",\"revision\":1,\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"invitations\":[{\"id\":\""
-        },
-        {
-          "ref": "invitation_1"
-        },
-        {
-          "literal": "\",\"recipient\":\"bob\",\"status\":\"accepted\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"memberships\":[{\"actorKey\":\"alice\",\"role\":\"admin\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"},{\"actorKey\":\"bob\",\"role\":\"member\",\"workspaceId\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\"}],\"users\":[{\"actorKey\":\"alice\",\"displayName\":\"Alice\"},{\"actorKey\":\"bob\",\"displayName\":\"Bob\"}],\"workspaces\":[{\"id\":\""
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
-        }
-      ],
-      "http": [
-        {
-          "literal": "[{\"method\":\"GET\",\"path\":\"/api/workspaces/"
-        },
-        {
-          "ref": "workspace_1"
-        },
-        {
-          "literal": "\",\"status\":200}]"
-        }
-      ]
-    },
-    {
-      "action": {
-        "actor": "alice",
-        "kind": "click",
-        "recipe": {
-          "by": "role",
-          "role": "link",
-          "name": [
+              "ref": "trial_text"
+            },
             {
-              "literal": "← Back to workspace"
+              "literal": " Open workspace"
             }
           ]
         }
@@ -711,7 +516,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -758,7 +569,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -831,7 +648,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -878,7 +701,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -887,6 +716,138 @@ const plan: ReplayPlan = {
         },
         {
           "ref": "document_1"
+        },
+        {
+          "literal": "\",\"status\":200}]"
+        }
+      ]
+    },
+    {
+      "action": {
+        "actor": "alice",
+        "kind": "click",
+        "recipe": {
+          "by": "role",
+          "role": "button",
+          "name": [
+            {
+              "literal": "Refresh members"
+            }
+          ]
+        }
+      },
+      "before": [
+        {
+          "literal": "{\"documents\":[{\"body\":\"A shared place for the next big idea.\",\"id\":\""
+        },
+        {
+          "ref": "document_1"
+        },
+        {
+          "literal": "\",\"revision\":1,\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"}],\"invitations\":[{\"id\":\""
+        },
+        {
+          "ref": "invitation_1"
+        },
+        {
+          "literal": "\",\"recipient\":\"bob\",\"status\":\"accepted\",\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"}],\"memberships\":[{\"actorKey\":\"alice\",\"role\":\"admin\",\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"},{\"actorKey\":\"bob\",\"role\":\"member\",\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"}],\"users\":[{\"actorKey\":\"alice\",\"displayName\":\"Alice\"},{\"actorKey\":\"bob\",\"displayName\":\"Bob\"}],\"workspaces\":[{\"id\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
+        }
+      ],
+      "after": [
+        {
+          "literal": "{\"documents\":[{\"body\":\"A shared place for the next big idea.\",\"id\":\""
+        },
+        {
+          "ref": "document_1"
+        },
+        {
+          "literal": "\",\"revision\":1,\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"}],\"invitations\":[{\"id\":\""
+        },
+        {
+          "ref": "invitation_1"
+        },
+        {
+          "literal": "\",\"recipient\":\"bob\",\"status\":\"accepted\",\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"}],\"memberships\":[{\"actorKey\":\"alice\",\"role\":\"admin\",\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"},{\"actorKey\":\"bob\",\"role\":\"member\",\"workspaceId\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\"}],\"users\":[{\"actorKey\":\"alice\",\"displayName\":\"Alice\"},{\"actorKey\":\"bob\",\"displayName\":\"Bob\"}],\"workspaces\":[{\"id\":\""
+        },
+        {
+          "ref": "workspace_1"
+        },
+        {
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
+        }
+      ],
+      "http": [
+        {
+          "literal": "[{\"method\":\"GET\",\"path\":\"/api/workspaces/"
+        },
+        {
+          "ref": "workspace_1"
         },
         {
           "literal": "\",\"status\":200}]"
@@ -951,7 +912,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -992,7 +959,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -1027,7 +1000,7 @@ const plan: ReplayPlan = {
           ]
         },
         "value": {
-          "literal": "Bob edit after removal"
+          "ref": "trial_text"
         }
       },
       "before": [
@@ -1068,7 +1041,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
@@ -1109,7 +1088,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -1170,12 +1155,24 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "after": [
         {
-          "literal": "{\"documents\":[{\"body\":\"Bob edit after removal\",\"id\":\""
+          "literal": "{\"documents\":[{\"body\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\",\"id\":\""
         },
         {
           "ref": "document_1"
@@ -1211,7 +1208,13 @@ const plan: ReplayPlan = {
           "ref": "workspace_1"
         },
         {
-          "literal": "\",\"name\":\"Team Alpha\"}]}"
+          "literal": "\",\"name\":\""
+        },
+        {
+          "ref": "trial_text"
+        },
+        {
+          "literal": "\"}]}"
         }
       ],
       "http": [
@@ -1229,7 +1232,7 @@ const plan: ReplayPlan = {
   ],
   "probeActor": "bob",
   "probeResource": "document_1",
-  "id": "b7cd05ed6e971a760edf0e253ff7a6d909dc31646657b6d99bf7f37865f0d1e6"
+  "id": "75afe58f40035125ac570029ed839a30ce9863190bfedfb515657b4a997a8bc5"
 };
 const credentials = { alice: 'generated-regression-alice', bob: 'generated-regression-bob' };
 

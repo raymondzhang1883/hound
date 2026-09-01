@@ -8,12 +8,16 @@ import { BrowserExperiment, type ReplayPlan } from './experiment.js';
 import { runHunt, type HuntResult } from './hunt.js';
 import { RunJournal } from './journal.js';
 import { OpenAIPolicy, RATE_CARD } from './openai-policy.js';
-import { PolicyError, PROMPT_VERSION } from './policy.js';
+import { PolicyError, PROMPT_VERSION, type Policy } from './policy.js';
 import { buildReportProjection, type ReportProjection } from './report.js';
+
+type AccountedPolicy = Omit<Policy, 'accounting'> & { accounting(): ReturnType<OpenAIPolicy['accounting']> };
 
 export interface LocalHuntOptions {
   root: string;
-  apiKey: string;
+  apiKey?: string;
+  policy?: AccountedPolicy;
+  policySecrets?: string[];
   caseName: 'positive' | 'negative';
   maxCostUsd: number;
   maxTrials: number;
@@ -47,10 +51,12 @@ async function journalFor(options: LocalHuntOptions, secrets: string[]) {
 }
 
 export async function executeLocalHunt(options: LocalHuntOptions): Promise<LocalHuntExecution> {
-  const policy = new OpenAIPolicy({ apiKey: options.apiKey, maxCostUsd: options.maxCostUsd });
+  if (!options.policy && !options.apiKey) throw new PolicyError('missing_api_key');
+  const policy: AccountedPolicy =
+    options.policy ?? new OpenAIPolicy({ apiKey: options.apiKey!, maxCostUsd: options.maxCostUsd });
   const credentials = { alice: `alice-${randomBytes(24).toString('hex')}`, bob: `bob-${randomBytes(24).toString('hex')}` };
   const keys = { baseline: randomBytes(32).toString('hex'), candidate: randomBytes(32).toString('hex') };
-  const journal = await journalFor(options, [options.apiKey, ...Object.values(credentials), ...Object.values(keys)]);
+  const journal = await journalFor(options, [...(options.apiKey ? [options.apiKey] : []), ...(options.policySecrets ?? []), ...Object.values(credentials), ...Object.values(keys)]);
   const runId = basename(journal.directory);
   let revision = 'unknown';
   try { revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: options.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }

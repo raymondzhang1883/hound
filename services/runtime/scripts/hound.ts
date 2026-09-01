@@ -10,6 +10,7 @@ const runRoot = join(root, '.hound/runs');
 const minimizationRoot = join(root, '.hound/minimizations');
 const help = `Hound CLI (terminal-first local interface)
 
+  ./hound demo
   ./hound hunt --preflight
   ./hound hunt --case positive|negative --max-cost-usd <amount> [--detach]
   ./hound worker [--once]
@@ -25,7 +26,9 @@ const help = `Hound CLI (terminal-first local interface)
   ./hound show --local --run-id <historical-id> [--json]
   ./hound report --run-id <id> [--output <workspace-relative.html>]
   ./hound report --local --run-id <historical-id> [--output <workspace-relative.html>]
+  ./hound test-generated
 
+demo runs the complete deterministic workflow with zero external model requests.
 hunt submits a durable run and streams it; worker executes owned fixture jobs. --local retains
 the direct development runner. minimize uses fresh deterministic fixture pairs.
 runs and show print sanitized results. report explicitly creates a static, self-contained

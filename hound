@@ -3,6 +3,11 @@ set -eu
 HOUND_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd -- "$HOUND_ROOT"
 case "${1:-}" in
+  demo)
+    shift
+    export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
+    exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/demo.ts" "$@"
+    ;;
   hunt)
     shift
     export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
@@ -49,6 +54,11 @@ case "${1:-}" in
       exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/minimize.ts" --local "$@"
     fi
     exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/minimize.ts" "$@"
+    ;;
+  test-generated)
+    shift
+    export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
+    exec npm run test:generated -- "$@"
     ;;
 esac
 exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/hound.ts" "$@"
