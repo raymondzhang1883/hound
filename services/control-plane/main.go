@@ -14,9 +14,11 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -35,12 +37,16 @@ var (
 	errNotFound   = errors.New("not_found")
 	errConflict   = errors.New("conflict")
 	errStaleLease = errors.New("stale_lease")
+	errInvalid    = errors.New("invalid_payload")
 )
 
 var (
 	workerIDPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$`)
 	eventIDPattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$`)
 	eventTypePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,79}$`)
+	hashPattern      = regexp.MustCompile(`^[0-9a-f]{64}$`)
+	labelPattern     = regexp.MustCompile(`^[A-Za-z0-9._@/+:-]{1,100}$`)
+	revisionPattern  = regexp.MustCompile(`^(?:[0-9a-f]{7,40}|unknown)$`)
 )
 
 type config struct {
@@ -48,11 +54,13 @@ type config struct {
 	databaseURL   string
 	workerKey     string
 	leaseDuration time.Duration
+	artifactDir   string
 }
 
 type store struct {
 	pool          *pgxpool.Pool
 	leaseDuration time.Duration
+	artifactDir   string
 }
 type server struct {
 	store     *store
@@ -108,8 +116,89 @@ type event struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
+type reportAction struct {
+	Index       int    `json:"index"`
+	Actor       string `json:"actor"`
+	Kind        string `json:"kind"`
+	Description string `json:"description"`
+	Probe       bool   `json:"probe"`
+}
+type reportTrial struct {
+	Index     int    `json:"index"`
+	Proposed  int    `json:"proposed"`
+	Executed  int    `json:"executed"`
+	Denials   int    `json:"denials"`
+	ElapsedMS int    `json:"elapsedMs"`
+	Reason    string `json:"reason"`
+}
+type reportProjection struct {
+	Version     int       `json:"version"`
+	Kind        string    `json:"kind"`
+	GeneratedAt time.Time `json:"generatedAt"`
+	RunID       string    `json:"runId"`
+	Invariant   struct {
+		ID   string `json:"id"`
+		Text string `json:"text"`
+	} `json:"invariant"`
+	Source struct {
+		Revision  string    `json:"revision"`
+		CreatedAt time.Time `json:"createdAt"`
+		Case      string    `json:"case"`
+	} `json:"source"`
+	Finding struct {
+		Outcome   string  `json:"outcome"`
+		Confirmed bool    `json:"confirmed"`
+		Title     string  `json:"title"`
+		Summary   string  `json:"summary"`
+		Actor     *string `json:"actor,omitempty"`
+		Resource  *string `json:"resource,omitempty"`
+	} `json:"finding"`
+	Comparison *struct {
+		Baseline struct {
+			Result          string `json:"result"`
+			SetupEquivalent bool   `json:"setupEquivalent"`
+		} `json:"baseline"`
+		Candidate struct {
+			Result          string `json:"result"`
+			SetupEquivalent bool   `json:"setupEquivalent"`
+		} `json:"candidate"`
+	} `json:"comparison,omitempty"`
+	Exploration struct {
+		StartedAt       time.Time      `json:"startedAt"`
+		FinishedAt      time.Time      `json:"finishedAt"`
+		ElapsedMS       int            `json:"elapsedMs"`
+		Trials          []reportTrial  `json:"trials"`
+		PlanID          *string        `json:"planId,omitempty"`
+		OriginalActions []reportAction `json:"originalActions"`
+		Policy          struct {
+			Provider      string `json:"provider"`
+			Model         string `json:"model"`
+			Reasoning     string `json:"reasoning"`
+			PromptVersion string `json:"promptVersion"`
+			Simulated     bool   `json:"simulated"`
+		} `json:"policy"`
+		Accounting struct {
+			Calls             int     `json:"calls"`
+			UnknownUsageCalls int     `json:"unknownUsageCalls"`
+			EstimatedCostUSD  float64 `json:"estimatedCostUsd"`
+		} `json:"accounting"`
+	} `json:"exploration"`
+}
+
+type artifact struct {
+	ID          string    `json:"id"`
+	RunID       string    `json:"runId"`
+	Kind        string    `json:"kind"`
+	ContentType string    `json:"contentType"`
+	SHA256      string    `json:"sha256"`
+	SizeBytes   int       `json:"sizeBytes"`
+	LogicalID   *string   `json:"logicalId,omitempty"`
+	CreatedAt   time.Time `json:"createdAt"`
+	storageKey  string
+}
+
 func envConfig() (config, error) {
-	c := config{listen: os.Getenv("HOUND_LISTEN_ADDR"), databaseURL: os.Getenv("HOUND_DATABASE_URL"), workerKey: os.Getenv("HOUND_WORKER_KEY"), leaseDuration: 30 * time.Second}
+	c := config{listen: os.Getenv("HOUND_LISTEN_ADDR"), databaseURL: os.Getenv("HOUND_DATABASE_URL"), workerKey: os.Getenv("HOUND_WORKER_KEY"), artifactDir: os.Getenv("HOUND_ARTIFACT_DIR"), leaseDuration: 30 * time.Second}
 	if c.listen == "" {
 		c.listen = "127.0.0.1:8090"
 	}
@@ -119,6 +208,13 @@ func envConfig() (config, error) {
 	if len(c.workerKey) < 32 {
 		return c, errors.New("HOUND_WORKER_KEY must contain at least 32 characters")
 	}
+	if !filepath.IsAbs(c.artifactDir) {
+		return c, errors.New("HOUND_ARTIFACT_DIR must be an absolute path")
+	}
+	metadata, err := os.Lstat(c.artifactDir)
+	if err != nil || !metadata.IsDir() || metadata.Mode()&os.ModeSymlink != 0 || metadata.Mode().Perm()&0077 != 0 {
+		return c, errors.New("HOUND_ARTIFACT_DIR must be a private real directory")
+	}
 	if raw := os.Getenv("HOUND_LEASE_DURATION"); raw != "" {
 		duration, err := time.ParseDuration(raw)
 		if err != nil || duration < time.Second || duration > 5*time.Minute {
@@ -127,6 +223,23 @@ func envConfig() (config, error) {
 		c.leaseDuration = duration
 	}
 	return c, nil
+}
+
+func initializeArtifactDirectory(path string) error {
+	if !filepath.IsAbs(path) {
+		return errors.New("artifact path must be absolute")
+	}
+	if err := os.MkdirAll(path, 0700); err != nil {
+		return err
+	}
+	metadata, err := os.Lstat(path)
+	if err != nil || !metadata.IsDir() || metadata.Mode()&os.ModeSymlink != 0 {
+		return errors.New("artifact path must be a real directory")
+	}
+	if err = os.Chown(path, 65532, 65532); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0700)
 }
 
 func randomID() (string, error) {
@@ -157,6 +270,64 @@ func leaseToken() (string, []byte, error) {
 	return token, sum[:], nil
 }
 func tokenHash(value string) []byte { sum := sha256.Sum256([]byte(value)); return sum[:] }
+
+func validProjection(data []byte, runID, caseName string) (reportProjection, error) {
+	var value reportProjection
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return value, err
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return value, errors.New("trailing projection data")
+	}
+	if value.Version != 1 || value.Kind != "hound-finding-report" || value.RunID != runID || value.GeneratedAt.IsZero() ||
+		value.Invariant.ID != "removed-member-write@1" || value.Invariant.Text != "Once a member is removed from a workspace, that member must no longer be able to modify its documents." ||
+		value.Source.Case != caseName || !revisionPattern.MatchString(value.Source.Revision) || value.Source.CreatedAt.IsZero() ||
+		!supportedOutcome(value.Finding.Outcome) || value.Finding.Outcome == "cancelled" || !bounded(value.Finding.Title, 160) || !bounded(value.Finding.Summary, 400) {
+		return value, errors.New("invalid projection envelope")
+	}
+	if value.Finding.Actor != nil && *value.Finding.Actor != "alice" && *value.Finding.Actor != "bob" {
+		return value, errors.New("invalid finding actor")
+	}
+	if value.Finding.Resource != nil && !eventIDPattern.MatchString(*value.Finding.Resource) {
+		return value, errors.New("invalid finding resource")
+	}
+	if len(value.Exploration.Trials) > 3 || len(value.Exploration.OriginalActions) > 120 || value.Exploration.StartedAt.IsZero() || value.Exploration.FinishedAt.IsZero() ||
+		value.Exploration.FinishedAt.Before(value.Exploration.StartedAt) || value.Exploration.ElapsedMS < 0 || value.Exploration.ElapsedMS > 3600000 ||
+		!labelPattern.MatchString(value.Exploration.Policy.Provider) || !labelPattern.MatchString(value.Exploration.Policy.Model) ||
+		!labelPattern.MatchString(value.Exploration.Policy.Reasoning) || !labelPattern.MatchString(value.Exploration.Policy.PromptVersion) ||
+		value.Exploration.Accounting.Calls < 0 || value.Exploration.Accounting.Calls > 100000 || value.Exploration.Accounting.UnknownUsageCalls < 0 ||
+		value.Exploration.Accounting.UnknownUsageCalls > 100000 || math.IsNaN(value.Exploration.Accounting.EstimatedCostUSD) || math.IsInf(value.Exploration.Accounting.EstimatedCostUSD, 0) ||
+		value.Exploration.Accounting.EstimatedCostUSD < 0 || value.Exploration.Accounting.EstimatedCostUSD > 10 {
+		return value, errors.New("invalid exploration projection")
+	}
+	for index, trial := range value.Exploration.Trials {
+		if trial.Index != index || trial.Proposed < 0 || trial.Proposed > 10000 || trial.Executed < 0 || trial.Executed > 10000 || trial.Denials < 0 || trial.Denials > 10000 ||
+			trial.ElapsedMS < 0 || trial.ElapsedMS > 3600000 || !labelPattern.MatchString(trial.Reason) {
+			return value, errors.New("invalid trial projection")
+		}
+	}
+	for index, action := range value.Exploration.OriginalActions {
+		if action.Index != index || action.Actor != "alice" && action.Actor != "bob" || !eventTypePattern.MatchString(action.Kind) || !bounded(action.Description, 160) || action.Probe != (index == len(value.Exploration.OriginalActions)-1) {
+			return value, errors.New("invalid action projection")
+		}
+	}
+	if value.Exploration.PlanID != nil && !hashPattern.MatchString(*value.Exploration.PlanID) || value.Exploration.PlanID == nil && len(value.Exploration.OriginalActions) != 0 {
+		return value, errors.New("invalid plan projection")
+	}
+	if value.Comparison != nil {
+		allowed := map[string]bool{"denied": true, "violation": true, "not_applicable": true, "inconclusive": true}
+		if !allowed[value.Comparison.Baseline.Result] || !allowed[value.Comparison.Candidate.Result] || value.Exploration.PlanID == nil {
+			return value, errors.New("invalid comparison projection")
+		}
+	}
+	confirmed := value.Finding.Outcome == "candidate_only_violation" && value.Comparison != nil && value.Comparison.Baseline.Result == "denied" && value.Comparison.Candidate.Result == "violation" && value.Comparison.Baseline.SetupEquivalent && value.Comparison.Candidate.SetupEquivalent
+	if value.Finding.Confirmed != confirmed || confirmed && (caseName != "positive" || value.Finding.Actor == nil || value.Finding.Resource == nil) {
+		return value, errors.New("inconsistent finding projection")
+	}
+	return value, nil
+}
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())`); err != nil {
@@ -283,6 +454,14 @@ func (s *store) lease(ctx context.Context, owner string) (*lease, error) {
 	}
 	item.LeaseToken = token
 	item.LeaseExpiresAt = time.Now().UTC().Add(s.leaseDuration)
+	if item.Attempt > 1 {
+		if _, err = tx.Exec(ctx, `DELETE FROM run_results WHERE run_id=$1`, item.RunID); err != nil {
+			return nil, fmt.Errorf("clear stale result: %w", err)
+		}
+		if _, err = tx.Exec(ctx, `DELETE FROM run_artifacts WHERE run_id=$1`, item.RunID); err != nil {
+			return nil, fmt.Errorf("clear stale artifacts: %w", err)
+		}
+	}
 	command, err := tx.Exec(ctx, `UPDATE jobs SET status='leased',attempt=$2,lease_epoch=$3,lease_owner=$4,lease_token_hash=$5,lease_expires_at=$6,updated_at=now(),finished_at=NULL WHERE id=$1`,
 		item.JobID, item.Attempt, item.LeaseEpoch, owner, hash, item.LeaseExpiresAt)
 	if err != nil {
@@ -396,6 +575,16 @@ func (s *store) complete(ctx context.Context, jobID, token string, epoch int64, 
 	if expiresAt == nil || !expiresAt.After(time.Now()) {
 		return errStaleLease
 	}
+	if state == "completed" {
+		var storedOutcome string
+		if err = tx.QueryRow(ctx, `SELECT outcome FROM run_results WHERE run_id=$1`, runID).Scan(&storedOutcome); errors.Is(err, pgx.ErrNoRows) {
+			return errConflict
+		} else if err != nil {
+			return err
+		} else if storedOutcome != outcome {
+			return errConflict
+		}
+	}
 	if _, err = tx.Exec(ctx, `UPDATE jobs SET status=$2,finished_at=now(),updated_at=now() WHERE id=$1`, jobID, state); err != nil {
 		return err
 	}
@@ -450,6 +639,179 @@ func (s *store) cancel(ctx context.Context, runID string) error {
 	return tx.Commit(ctx)
 }
 
+func (s *store) validateLease(ctx context.Context, jobID, token string, epoch int64) error {
+	var stored []byte
+	err := s.pool.QueryRow(ctx, `SELECT lease_token_hash FROM jobs WHERE id=$1 AND lease_epoch=$2 AND status='running' AND lease_expires_at>now()`, jobID, epoch).Scan(&stored)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !checkLease(stored, token) {
+		return errStaleLease
+	}
+	return err
+}
+
+func (s *store) attachArtifact(ctx context.Context, jobID, token string, epoch int64, kind, contentType, hash string, size int, logicalID, storageKey string) (artifact, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return artifact{}, err
+	}
+	defer tx.Rollback(ctx)
+	var runID, status string
+	var attempt int
+	var stored []byte
+	var expires time.Time
+	err = tx.QueryRow(ctx, `SELECT run_id,status,attempt,lease_token_hash,lease_expires_at FROM jobs WHERE id=$1 AND lease_epoch=$2 FOR UPDATE`, jobID, epoch).Scan(&runID, &status, &attempt, &stored, &expires)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !checkLease(stored, token) || err == nil && (status != "running" || !expires.After(time.Now())) {
+		return artifact{}, errStaleLease
+	}
+	if err != nil {
+		return artifact{}, err
+	}
+	var existing artifact
+	err = tx.QueryRow(ctx, `SELECT id,run_id,kind,content_type,sha256,size_bytes,logical_id,created_at,storage_key FROM run_artifacts WHERE run_id=$1 AND kind=$2`, runID, kind).Scan(
+		&existing.ID, &existing.RunID, &existing.Kind, &existing.ContentType, &existing.SHA256, &existing.SizeBytes, &existing.LogicalID, &existing.CreatedAt, &existing.storageKey)
+	if err == nil {
+		if existing.SHA256 != hash || existing.SizeBytes != size || value(existing.LogicalID) != logicalID || existing.ContentType != contentType {
+			return artifact{}, errConflict
+		}
+		return existing, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return artifact{}, err
+	}
+	id, err := randomID()
+	if err != nil {
+		return artifact{}, err
+	}
+	item := artifact{ID: id, RunID: runID, Kind: kind, ContentType: contentType, SHA256: hash, SizeBytes: size, CreatedAt: time.Now().UTC(), storageKey: storageKey}
+	if logicalID != "" {
+		item.LogicalID = &logicalID
+	}
+	err = tx.QueryRow(ctx, `INSERT INTO run_artifacts(id,run_id,job_id,attempt,kind,content_type,sha256,size_bytes,logical_id,storage_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		RETURNING created_at`, item.ID, runID, jobID, attempt, kind, contentType, hash, size, item.LogicalID, storageKey).Scan(&item.CreatedAt)
+	if err != nil {
+		return artifact{}, err
+	}
+	return item, tx.Commit(ctx)
+}
+
+func (s *store) putResult(ctx context.Context, jobID, token string, epoch int64, data []byte, hash string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var runID, caseName, status string
+	var attempt int
+	var stored []byte
+	var expires time.Time
+	err = tx.QueryRow(ctx, `SELECT j.run_id,r.case_name,j.status,j.attempt,j.lease_token_hash,j.lease_expires_at FROM jobs j JOIN runs r ON r.id=j.run_id WHERE j.id=$1 AND j.lease_epoch=$2 FOR UPDATE OF j,r`, jobID, epoch).Scan(
+		&runID, &caseName, &status, &attempt, &stored, &expires)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && !checkLease(stored, token) || err == nil && (status != "running" || !expires.After(time.Now())) {
+		return errStaleLease
+	}
+	if err != nil {
+		return err
+	}
+	projection, err := validProjection(data, runID, caseName)
+	if err != nil {
+		return errInvalid
+	}
+	if projection.Exploration.PlanID != nil {
+		var exists bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM run_artifacts WHERE run_id=$1 AND kind='replay_plan' AND logical_id=$2)`, runID, *projection.Exploration.PlanID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return errConflict
+		}
+	}
+	var existingHash string
+	err = tx.QueryRow(ctx, `SELECT projection_sha256 FROM run_results WHERE run_id=$1`, runID).Scan(&existingHash)
+	if err == nil {
+		if existingHash != hash {
+			return errConflict
+		}
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO run_results(run_id,job_id,attempt,outcome,projection,projection_sha256,size_bytes) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+		runID, jobID, attempt, projection.Finding.Outcome, string(data), hash, len(data)); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *store) result(ctx context.Context, runID string) (json.RawMessage, error) {
+	var data []byte
+	err := s.pool.QueryRow(ctx, `SELECT rr.projection::text FROM run_results rr JOIN runs r ON r.id=rr.run_id WHERE rr.run_id=$1 AND r.status='completed'`, runID).Scan(&data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if _, runErr := s.getRun(ctx, runID); runErr != nil {
+			return nil, runErr
+		}
+		return nil, errNotFound
+	}
+	return json.RawMessage(data), err
+}
+
+func (s *store) artifact(ctx context.Context, runID, kind string) (artifact, error) {
+	var item artifact
+	err := s.pool.QueryRow(ctx, `SELECT a.id,a.run_id,a.kind,a.content_type,a.sha256,a.size_bytes,a.logical_id,a.created_at,a.storage_key FROM run_artifacts a JOIN runs r ON r.id=a.run_id WHERE a.run_id=$1 AND a.kind=$2 AND r.status='completed'`, runID, kind).Scan(
+		&item.ID, &item.RunID, &item.Kind, &item.ContentType, &item.SHA256, &item.SizeBytes, &item.LogicalID, &item.CreatedAt, &item.storageKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return artifact{}, errNotFound
+	}
+	return item, err
+}
+
+func (s *store) putBlob(data []byte, hash string) (string, error) {
+	prefix := hash[:2]
+	directory := filepath.Join(s.artifactDir, prefix)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(directory, 0700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(directory, hash)
+	if metadata, err := os.Lstat(path); err == nil {
+		if !metadata.Mode().IsRegular() || metadata.Mode()&os.ModeSymlink != 0 || metadata.Size() != int64(len(data)) {
+			return "", errors.New("invalid existing artifact blob")
+		}
+		existing, readErr := os.ReadFile(path)
+		sum := sha256.Sum256(existing)
+		if readErr != nil || subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(hash)) != 1 {
+			return "", errors.New("corrupt existing artifact blob")
+		}
+		return prefix + "/" + hash, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	temporary, err := os.CreateTemp(directory, ".upload-*")
+	if err != nil {
+		return "", err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err = temporary.Chmod(0600); err == nil {
+		_, err = temporary.Write(data)
+	}
+	if err == nil {
+		err = temporary.Sync()
+	}
+	closeErr := temporary.Close()
+	if err != nil {
+		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if err = os.Rename(temporaryPath, path); err != nil {
+		return "", err
+	}
+	return prefix + "/" + hash, nil
+}
+
 func (s *store) events(ctx context.Context, runID string, after int64, limit int) ([]event, error) {
 	rows, err := s.pool.Query(ctx, `SELECT sequence,run_id,job_id,attempt,worker_event_id,event_type,summary,occurred_at,created_at FROM run_events WHERE run_id=$1 AND sequence>$2 ORDER BY sequence LIMIT $3`, runID, after, limit)
 	if err != nil {
@@ -478,6 +840,44 @@ func decode(w http.ResponseWriter, r *http.Request, target any) error {
 		return errors.New("trailing_json_data")
 	}
 	return nil
+}
+
+func payload(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, string, error) {
+	if r.Header.Get("Content-Type") != "application/json" {
+		return nil, "", errInvalid
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	data, err := io.ReadAll(r.Body)
+	if err != nil || len(data) < 2 {
+		return nil, "", errInvalid
+	}
+	declared := r.Header.Get("X-Hound-Content-SHA256")
+	sum := sha256.Sum256(data)
+	hash := hex.EncodeToString(sum[:])
+	if !hashPattern.MatchString(declared) || subtle.ConstantTimeCompare([]byte(declared), []byte(hash)) != 1 {
+		return nil, "", errInvalid
+	}
+	return data, hash, nil
+}
+
+func planLogicalID(data []byte) (string, error) {
+	var plan struct {
+		Version       int               `json:"version"`
+		ID            string            `json:"id"`
+		ProbeActor    string            `json:"probeActor"`
+		ProbeResource string            `json:"probeResource"`
+		Steps         []json.RawMessage `json:"steps"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&plan); err != nil {
+		return "", errInvalid
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || plan.Version != 1 || !hashPattern.MatchString(plan.ID) ||
+		plan.ProbeActor != "alice" && plan.ProbeActor != "bob" || !eventIDPattern.MatchString(plan.ProbeResource) || len(plan.Steps) < 1 || len(plan.Steps) > 120 {
+		return "", errInvalid
+	}
+	return plan.ID, nil
 }
 func respond(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -575,6 +975,46 @@ func (s *server) routes() http.Handler {
 		respond(w, 200, map[string]string{"status": "cancelled"})
 	})
 	mux.HandleFunc("GET /v1/runs/{runID}/events", s.eventRead)
+	mux.HandleFunc("GET /v1/runs/{runID}/result", func(w http.ResponseWriter, r *http.Request) {
+		data, err := s.store.result(r.Context(), r.PathValue("runID"))
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("GET /v1/runs/{runID}/artifacts/{kind}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("kind") != "replay_plan" {
+			problem(w, 404, "not_found")
+			return
+		}
+		item, err := s.store.artifact(r.Context(), r.PathValue("runID"), r.PathValue("kind"))
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		if item.storageKey != item.SHA256[:2]+"/"+item.SHA256 {
+			s.fail(w, errors.New("invalid artifact storage key"))
+			return
+		}
+		data, err := os.ReadFile(filepath.Join(s.store.artifactDir, filepath.FromSlash(item.storageKey)))
+		if err != nil || len(data) != item.SizeBytes {
+			s.fail(w, errors.New("artifact blob unavailable"))
+			return
+		}
+		sum := sha256.Sum256(data)
+		if hex.EncodeToString(sum[:]) != item.SHA256 {
+			s.fail(w, errors.New("artifact blob checksum mismatch"))
+			return
+		}
+		w.Header().Set("Content-Type", item.ContentType)
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("ETag", `"`+item.SHA256+`"`)
+		w.Header().Set("X-Hound-Artifact-ID", item.ID)
+		_, _ = w.Write(data)
+	})
 	mux.HandleFunc("POST /v1/jobs/lease", func(w http.ResponseWriter, r *http.Request) {
 		if !s.worker(r) {
 			problem(w, 401, "worker_unauthorized")
@@ -641,6 +1081,56 @@ func (s *server) routes() http.Handler {
 			return
 		}
 		respond(w, 200, item)
+	})
+	mux.HandleFunc("PUT /v1/jobs/{jobID}/artifacts/{kind}", func(w http.ResponseWriter, r *http.Request) {
+		e, err := epoch(r)
+		if err != nil || r.PathValue("kind") != "replay_plan" {
+			problem(w, 400, "invalid_artifact")
+			return
+		}
+		data, hash, err := payload(w, r, 1<<20)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		logicalID, err := planLogicalID(data)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		token := bearer(r)
+		if err = s.store.validateLease(r.Context(), r.PathValue("jobID"), token, e); err != nil {
+			s.fail(w, err)
+			return
+		}
+		storageKey, err := s.store.putBlob(data, hash)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		item, err := s.store.attachArtifact(r.Context(), r.PathValue("jobID"), token, e, "replay_plan", "application/json", hash, len(data), logicalID, storageKey)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		respond(w, 200, item)
+	})
+	mux.HandleFunc("PUT /v1/jobs/{jobID}/result", func(w http.ResponseWriter, r *http.Request) {
+		e, err := epoch(r)
+		if err != nil {
+			problem(w, 400, "invalid_lease")
+			return
+		}
+		data, hash, err := payload(w, r, 256<<10)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		if err = s.store.putResult(r.Context(), r.PathValue("jobID"), bearer(r), e, data, hash); err != nil {
+			s.fail(w, err)
+			return
+		}
+		respond(w, 200, map[string]string{"status": "stored", "sha256": hash})
 	})
 	mux.HandleFunc("POST /v1/jobs/{jobID}/complete", func(w http.ResponseWriter, r *http.Request) {
 		e, err := epoch(r)
@@ -741,6 +1231,8 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 		problem(w, 409, "stale_lease")
 	case errors.Is(err, errConflict):
 		problem(w, 409, "conflict")
+	case errors.Is(err, errInvalid):
+		problem(w, 422, "invalid_payload")
 	default:
 		s.logger.Error("request failed", "error", err)
 		problem(w, 500, "internal_error")
@@ -748,6 +1240,13 @@ func (s *server) fail(w http.ResponseWriter, err error) {
 }
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "init-artifacts" {
+		if err := initializeArtifactDirectory(os.Args[2]); err != nil {
+			fmt.Fprintln(os.Stderr, "artifact directory initialization failed")
+			os.Exit(1)
+		}
+		return
+	}
 	cfg, err := envConfig()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -766,7 +1265,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	app := &server{store: &store{pool: pool, leaseDuration: cfg.leaseDuration}, workerKey: cfg.workerKey, logger: logger}
+	app := &server{store: &store{pool: pool, leaseDuration: cfg.leaseDuration, artifactDir: cfg.artifactDir}, workerKey: cfg.workerKey, logger: logger}
 	httpServer := &http.Server{Addr: cfg.listen, Handler: app.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 0, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()

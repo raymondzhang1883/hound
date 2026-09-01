@@ -15,7 +15,18 @@ services:
     volumes:
       - hound-postgres:/var/lib/postgresql
 
+  artifact-init:
+    image: hound-local-control-plane
+    user: "0:0"
+    entrypoint: ["/hound-control", "init-artifacts", "/var/lib/hound/artifacts"]
+    read_only: true
+    volumes:
+      - hound-artifacts:/var/lib/hound/artifacts
+    security_opt:
+      - no-new-privileges:true
+
   control-plane:
+    image: hound-local-control-plane
     build:
       context: ../..
       dockerfile: services/control-plane/Dockerfile
@@ -24,7 +35,10 @@ services:
       HOUND_WORKER_KEY: ${HOUND_WORKER_KEY:?set HOUND_WORKER_KEY}
       HOUND_LISTEN_ADDR: :8090
       HOUND_LEASE_DURATION: ${HOUND_LEASE_DURATION:-30s}
+      HOUND_ARTIFACT_DIR: /var/lib/hound/artifacts
     depends_on:
+      artifact-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
     ports:
@@ -32,8 +46,11 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
+    volumes:
+      - hound-artifacts:/var/lib/hound/artifacts
     security_opt:
       - no-new-privileges:true
 
 volumes:
   hound-postgres:
+  hound-artifacts:

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const envPath = process.env.HOUND_CONTROL_ENV ?? ".hound/control-plane.env";
@@ -105,6 +106,50 @@ async function emit(item, body, expected = 200) {
   });
 }
 
+function projection(item, outcome = "no_suspicion") {
+  const now = new Date().toISOString();
+  const confirmed = outcome === "candidate_only_violation";
+  return {
+    version: 1,
+    kind: "hound-finding-report",
+    generatedAt: now,
+    runId: item.runId,
+    invariant: {
+      id: "removed-member-write@1",
+      text: "Once a member is removed from a workspace, that member must no longer be able to modify its documents.",
+    },
+    source: { revision: "unknown", createdAt: now, case: item.case },
+    finding: {
+      outcome,
+      confirmed,
+      title: confirmed ? "Removed member retained document write access" : "No candidate-only suspicion observed",
+      summary: confirmed ? "Fresh paired replay denied the write on the baseline and reproduced it on the candidate." : "This result is not a security pass. Review the terminal outcome and private journal before drawing a conclusion.",
+      ...(confirmed ? { actor: "bob", resource: "document_1" } : {}),
+    },
+    ...(confirmed ? { comparison: { baseline: { result: "denied", setupEquivalent: true }, candidate: { result: "violation", setupEquivalent: true } } } : {}),
+    exploration: {
+      startedAt: now,
+      finishedAt: now,
+      elapsedMs: 0,
+      trials: [],
+      ...(confirmed ? { planId: "a".repeat(64) } : {}),
+      originalActions: confirmed ? [{ index: 0, actor: "bob", kind: "click", description: "submits the document write", probe: true }] : [],
+      policy: { provider: "integration", model: "none", reasoning: "none", promptVersion: "integration", simulated: true },
+      accounting: { calls: 0, unknownUsageCalls: 0, estimatedCostUsd: 0 },
+    },
+  };
+}
+
+async function putJSON(item, path, value, expected = 200) {
+  const body = JSON.stringify(value);
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  return request(path, { method: "PUT", expected, headers: { ...leaseHeaders(item), "X-Hound-Content-SHA256": sha256 }, body });
+}
+
+async function uploadResult(item, value = projection(item), expected = 200) {
+  return putJSON(item, `/v1/jobs/${item.jobId}/result`, value, expected);
+}
+
 const firstRun = await createRun();
 const firstLease = await leaseForRun(firstRun.id, "integration-primary");
 assert.equal(firstLease.runId, firstRun.id);
@@ -125,9 +170,20 @@ await request(`/v1/jobs/${firstLease.jobId}/heartbeat`, {
 });
 await complete(firstLease, { state: "completed", outcome: "cancelled", reason: "" }, 422);
 const success = { state: "completed", outcome: "candidate_only_violation", reason: "" };
+await complete(firstLease, success, 409);
+const plan = { version: 1, id: "a".repeat(64), probeActor: "bob", probeResource: "document_1", steps: [{}] };
+await putJSON(firstLease, `/v1/jobs/${firstLease.jobId}/artifacts/replay_plan`, plan);
+await putJSON(firstLease, `/v1/jobs/${firstLease.jobId}/artifacts/replay_plan`, plan);
+await putJSON(firstLease, `/v1/jobs/${firstLease.jobId}/artifacts/replay_plan`, { ...plan, id: "b".repeat(64) }, 409);
+await request(`/v1/runs/${firstRun.id}/artifacts/replay_plan`, { expected: 404 });
+const durableProjection = projection(firstLease, "candidate_only_violation");
+await uploadResult(firstLease, durableProjection);
+await uploadResult(firstLease, durableProjection);
+await uploadResult(firstLease, { ...durableProjection, generatedAt: new Date(Date.now() + 1_000).toISOString() }, 409);
 await complete(firstLease, success);
 await complete(firstLease, success);
 await complete(firstLease, { ...success, outcome: "no_suspicion" }, 409);
+await uploadResult(firstLease, durableProjection, 409);
 await request(`/v1/jobs/${firstLease.jobId}/heartbeat`, {
   method: "POST",
   expected: 409,
@@ -136,6 +192,8 @@ await request(`/v1/jobs/${firstLease.jobId}/heartbeat`, {
 const finished = await request(`/v1/runs/${firstRun.id}`);
 assert.equal(finished.status, "completed");
 assert.equal(finished.outcome, "candidate_only_violation");
+assert.equal((await request(`/v1/runs/${firstRun.id}/result`)).runId, firstRun.id);
+assert.equal((await request(`/v1/runs/${firstRun.id}/artifacts/replay_plan`)).id, plan.id);
 
 const cancelledRun = await createRun("negative");
 const cancelledLease = await leaseForRun(cancelledRun.id, "integration-cancel");
@@ -159,11 +217,19 @@ const retryRun = await createRun();
 const staleLease = await leaseForRun(retryRun.id, "integration-expiry-a");
 assert.equal(staleLease.runId, retryRun.id);
 await start(staleLease);
+const stalePlan = { ...plan, id: "c".repeat(64) };
+await putJSON(staleLease, `/v1/jobs/${staleLease.jobId}/artifacts/replay_plan`, stalePlan);
+const staleProjection = projection(staleLease, "candidate_only_violation");
+staleProjection.exploration.planId = stalePlan.id;
+await uploadResult(staleLease, staleProjection);
+await request(`/v1/runs/${retryRun.id}/result`, { expected: 404 });
 await waitForLeaseExpiry(staleLease);
 const retryLease = await lease("integration-expiry-b");
 assert.equal(retryLease.runId, retryRun.id);
 assert.equal(retryLease.attempt, 2);
 assert.ok(retryLease.leaseEpoch > staleLease.leaseEpoch);
+await request(`/v1/runs/${retryRun.id}/result`, { expected: 404 });
+await request(`/v1/runs/${retryRun.id}/artifacts/replay_plan`, { expected: 404 });
 await start(staleLease, 409);
 await start(retryLease);
 await waitForLeaseExpiry(retryLease);
@@ -185,6 +251,7 @@ const streamRun = await createRun();
 const streamLease = await leaseForRun(streamRun.id, "integration-stream");
 await start(streamLease);
 const streamEvent = await emit(streamLease, { ...eventBody, workerEventId: "stream-1", type: "run_progress", summary: "Streaming lifecycle event" });
+await uploadResult(streamLease);
 await complete(streamLease, { state: "completed", outcome: "no_suspicion", reason: "" });
 const streamResponse = await fetch(`${baseURL}/v1/runs/${streamRun.id}/events?follow=true`, { headers: { Accept: "text/event-stream" } });
 assert.equal(streamResponse.status, 200);
