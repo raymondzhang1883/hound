@@ -1,5 +1,6 @@
 import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { ReportProjection } from './report.js';
 
 export interface ControlRun {
   id: string;
@@ -66,6 +67,7 @@ export class ControlApi {
   }
   runs(limit: number) { return this.request<{ runs: ControlRun[] }>(`/v1/runs?limit=${limit}`); }
   run(id: string) { return this.request<ControlRun>(`/v1/runs/${encodeURIComponent(id)}`); }
+  result(id: string) { return this.request<ReportProjection>(`/v1/runs/${encodeURIComponent(id)}/result`); }
   cancel(id: string) { return this.request<{ status: string }>(`/v1/runs/${encodeURIComponent(id)}/cancel`, { method: 'POST' }); }
 }
 

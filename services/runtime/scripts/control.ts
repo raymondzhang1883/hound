@@ -1,9 +1,12 @@
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { relative } from 'node:path';
 import { chromium } from '@playwright/test';
 import { ControlApi, ControlError, controlEnvironment, type ControlRun } from '../src/control-api.js';
 import { MODEL } from '../src/openai-policy.js';
+import { reportOutput, writeHtml } from '../src/report-files.js';
+import { renderHtmlReport, terminalSummary } from '../src/report.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const runPattern = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-[0-9a-f-]{36}$/;
@@ -15,6 +18,8 @@ const help = `Hound durable control client
   ./hound status <run-id> [--json]
   ./hound logs <run-id> [--follow] [--after <sequence>]
   ./hound cancel <run-id>
+  ./hound show --run-id <run-id> [--json]
+  ./hound report --run-id <run-id> [--output <workspace-relative.html>]
 
 hunt submits to the loopback control plane and streams by default. --detach prints the run ID
 and returns. A separate ./hound worker process executes queued owned-fixture jobs.
@@ -136,6 +141,28 @@ async function main() {
   if (command === 'cancel') {
     const args = parseArgs({ args: rest, options: {}, allowPositionals: true, strict: true }); const runId = runIdFrom(args.positionals);
     await api.cancel(runId); console.log(`Cancelled run ${runId}.`); return;
+  }
+  if (command === 'show' || command === 'report') {
+    let args;
+    try { args = parseArgs({ args: rest, options: { 'run-id': { type: 'string' }, json: { type: 'boolean' }, output: { type: 'string' } }, strict: true }); }
+    catch { throw new ControlError('invalid_arguments'); }
+    const runId = args.values['run-id'] ?? '';
+    if (!runPattern.test(runId) || (command === 'show' && args.values.output) || (command === 'report' && args.values.json)) throw new ControlError('invalid_arguments');
+    const report = await api.result(runId);
+    if (!report) throw new ControlError('missing_result');
+    if (command === 'show') { console.log(args.values.json ? JSON.stringify(report, null, 2) : terminalSummary(report)); return; }
+    if (!report.finding.confirmed) throw new ControlError('report_requires_confirmed_finding');
+    let output;
+    try {
+      output = reportOutput(root, args.values.output, runId);
+      await writeHtml(root, output, renderHtmlReport(report));
+    } catch (error: any) {
+      const code = typeof error?.message === 'string' && /^[a-z_]+$/.test(error.message) ? error.message : 'report_export_failed';
+      throw new ControlError(code);
+    }
+    console.log(`HTML report: ${relative(root, output)}`);
+    console.log('The CLI summary and durable result remain the source of truth.');
+    return;
   }
   throw new ControlError('unknown_command');
 }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
 import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -67,19 +68,27 @@ async function processLease(api: ControlApi, lease: ControlLease, apiKey: string
   try {
     execution = await executeLocalHunt({ root, apiKey, caseName: lease.case, maxCostUsd: lease.maxCostUsd, maxTrials: lease.maxTrials,
       headed, signal, runId: lease.runId, attempt: lease.attempt, emit: sendEvent });
-  } finally { active = false; heartbeatStop.abort(); await heartbeat; }
-  if (signal.aborted) {
-    console.error(`Stopped run ${lease.runId} after its lease or worker process was cancelled.`); return;
-  }
-  if (!execution.result || execution.failure) {
+    if (signal.aborted) {
+      console.error(`Stopped run ${lease.runId} after its lease or worker process was cancelled.`); return;
+    }
+    if (!execution.result || execution.failure) {
+      await api.request(`/v1/jobs/${lease.jobId}/complete`, { method: 'POST', headers,
+        body: JSON.stringify({ state: 'failed', outcome: '', reason: (execution.failure ?? 'worker_execution_failed').slice(0, 120) }) });
+      console.error(`Run ${lease.runId} failed: ${execution.failure ?? 'worker_execution_failed'}.`); return;
+    }
+    if (execution.result.outcome === 'cancelled') return;
+    const upload = async (path: string, value: unknown) => {
+      const body = JSON.stringify(value);
+      const sha256 = createHash('sha256').update(body).digest('hex');
+      await api.request(path, { method: 'PUT', headers: { ...headers, 'X-Hound-Content-SHA256': sha256 }, body });
+    };
+    if (execution.plan) await upload(`/v1/jobs/${lease.jobId}/artifacts/replay_plan`, execution.plan);
+    if (!execution.projection) throw new ControlError('missing_result_projection');
+    await upload(`/v1/jobs/${lease.jobId}/result`, execution.projection);
     await api.request(`/v1/jobs/${lease.jobId}/complete`, { method: 'POST', headers,
-      body: JSON.stringify({ state: 'failed', outcome: '', reason: (execution.failure ?? 'worker_execution_failed').slice(0, 120) }) });
-    console.error(`Run ${lease.runId} failed: ${execution.failure ?? 'worker_execution_failed'}.`); return;
-  }
-  if (execution.result.outcome === 'cancelled') return;
-  await api.request(`/v1/jobs/${lease.jobId}/complete`, { method: 'POST', headers,
-    body: JSON.stringify({ state: 'completed', outcome: execution.result.outcome, reason: '' }) });
-  console.log(`Completed run ${lease.runId}: ${execution.result.outcome}.`);
+      body: JSON.stringify({ state: 'completed', outcome: execution.result.outcome, reason: '' }) });
+    console.log(`Completed run ${lease.runId}: ${execution.result.outcome}.`);
+  } finally { active = false; heartbeatStop.abort(); await heartbeat; }
 }
 
 async function main() {

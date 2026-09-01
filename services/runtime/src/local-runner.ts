@@ -4,11 +4,12 @@ import { mkdir, rename } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { chromium, type Browser } from '@playwright/test';
 import { startFixture } from '../../../apps/fixture/src/server.js';
-import { BrowserExperiment } from './experiment.js';
+import { BrowserExperiment, type ReplayPlan } from './experiment.js';
 import { runHunt, type HuntResult } from './hunt.js';
 import { RunJournal } from './journal.js';
 import { OpenAIPolicy, RATE_CARD } from './openai-policy.js';
 import { PolicyError, PROMPT_VERSION } from './policy.js';
+import { buildReportProjection, type ReportProjection } from './report.js';
 
 export interface LocalHuntOptions {
   root: string;
@@ -27,6 +28,8 @@ export interface LocalHuntExecution {
   runId: string;
   journalDirectory: string;
   result?: HuntResult;
+  plan?: ReplayPlan;
+  projection?: ReportProjection;
   failure?: string;
   accounting: ReturnType<OpenAIPolicy['accounting']>;
 }
@@ -52,12 +55,14 @@ export async function executeLocalHunt(options: LocalHuntOptions): Promise<Local
   let revision = 'unknown';
   try { revision = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: options.root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
   catch { /* Source archives need not have Git metadata. */ }
-  await journal.write('config', { version: 1, revision, case: options.caseName, policy: policy.metadata, promptVersion: PROMPT_VERSION, rateCard: RATE_CARD,
-    maxCostUsd: options.maxCostUsd, maxTrials: options.maxTrials, maxDecisions: 40, discoveryMs: 600_000, verificationMs: 180_000, createdAt: new Date().toISOString() });
+  const config = { version: 1, revision, case: options.caseName, policy: policy.metadata, promptVersion: PROMPT_VERSION, rateCard: RATE_CARD,
+    maxCostUsd: options.maxCostUsd, maxTrials: options.maxTrials, maxDecisions: 40, discoveryMs: 600_000, verificationMs: 180_000, createdAt: new Date().toISOString() };
+  await journal.write('config', config);
   let baseline: Awaited<ReturnType<typeof startFixture>> | undefined;
   let candidate: typeof baseline;
   let browser: Browser | undefined;
   let result: HuntResult | undefined;
+  let plan: ReplayPlan | undefined;
   let failure: string | undefined;
   try {
     baseline = await startFixture({ mode: 'baseline', credentials, harnessKey: keys.baseline });
@@ -67,7 +72,7 @@ export async function executeLocalHunt(options: LocalHuntOptions): Promise<Local
       factory: { open: (target, experimentOptions) => BrowserExperiment.open(browser!, { ...(target === 'baseline' ? baseline! : candidate!),
         harnessKey: keys[target], credentials, ...experimentOptions }) },
       emit: async event => { await journal.append(event); await options.emit?.(event); },
-      savePlan: plan => journal.write('plan', plan),
+      savePlan: async value => { plan = value; await journal.write('plan', value); },
     });
   } catch (error) { failure = error instanceof PolicyError ? error.code : 'pilot_setup_failed'; }
   finally {
@@ -79,5 +84,6 @@ export async function executeLocalHunt(options: LocalHuntOptions): Promise<Local
     else { await journal.write('result', { version: 1, outcome: 'inconclusive', reason: failure, accounting: policy.accounting() }); }
   }
   if (result) await journal.write('result', result);
-  return { runId, journalDirectory: journal.directory, result, failure, accounting: policy.accounting() };
+  const projection = result ? buildReportProjection({ runId, config, result, ...(plan ? { plan } : {}) }) : undefined;
+  return { runId, journalDirectory: journal.directory, result, ...(plan ? { plan } : {}), ...(projection ? { projection } : {}), failure, accounting: policy.accounting() };
 }

@@ -32,6 +32,15 @@ case "${1:-}" in
     fi
     exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/control.ts" runs "$@"
     ;;
+  show|report)
+    HOUND_COMMAND=$1
+    shift
+    if [ "${1:-}" = "--local" ]; then
+      shift
+      exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/hound.ts" "$HOUND_COMMAND" "$@"
+    fi
+    exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/control.ts" "$HOUND_COMMAND" "$@"
+    ;;
   minimize)
     shift
     export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"

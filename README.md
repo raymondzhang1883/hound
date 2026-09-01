@@ -4,7 +4,7 @@ Hunt stateful authorization regressions before they ship.
 
 Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
 
-**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. The CLI now submits durable runs to a loopback Go/Postgres control plane, streams sanitized events by default, supports detached execution and cancellation, and uses a separately authenticated local browser worker. Completed worker journals remain compatible with `show`, minimization, and the secondary self-contained example HTML finding report. Two live control-plane smoke runs added $0.015702 in estimated model cost; cumulative estimated model cost is $0.547931.
+**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. The CLI now submits durable runs to a loopback Go/Postgres control plane, streams sanitized events, supports detached execution and cancellation, and uses a separately authenticated local browser worker. Workers commit a checksummed replay plan and allowlisted result before completion, so `show` and the secondary HTML report no longer depend on worker-local files. Historical journals remain available through explicit `--local` commands. Two live control-plane smoke runs added $0.015702 in estimated model cost; cumulative estimated model cost is $0.547931.
 
 ## The first regression
 
@@ -117,7 +117,7 @@ The CLI is Hound's primary interface. It owns execution, terminal status, machin
 ./hound report --run-id <run-id>
 ```
 
-`show` is the default way to understand a result. `report` is an explicit secondary export for reviewing or sharing one confirmed finding; it does not start a server or become a separate source of truth. Reports are static, contain no scripts or external assets, and derive from a versioned allowlisted projection that excludes raw observations, provider text, credentials, HTTP bodies, addresses, and private paths. See the CLI and report guide and design decision.
+`show` is the default way to understand a durable result. `report` is an explicit secondary export for reviewing or sharing one confirmed finding; it does not start a server or become a separate source of truth. Reports are static, contain no scripts or external assets, and derive from a versioned allowlisted projection that excludes raw observations, provider text, credentials, HTTP bodies, addresses, and private paths. Historical local results use `show --local` or `report --local`. See the CLI and report guide, report design, and durable result contract.
 
 ## Tests and evidence
 
@@ -130,7 +130,7 @@ npm run test:control
 npm run test:browser -- --repeat-each=3
 ```
 
-`test:control` requires `./hound control up`; it exercises durable creation, concurrent leasing, heartbeat, idempotent events, cancellation, stale-worker fencing, retry exhaustion, and SSE replay without a browser or provider call.
+`test:control` requires `./hound control up`; it exercises durable creation, concurrent leasing, heartbeat, idempotent and conflicting result/artifact uploads, completion gating, crash-boundary cleanup, cancellation, stale-worker fencing, retry exhaustion, and SSE replay without a browser or provider call.
 
 The state and HTTP tests cover the seeded behavior, session/workspace isolation, member administration boundaries, invitation reuse, conflicting edits, harness authentication, competing execution acquisition, and a request that spans a reset.
 
@@ -167,8 +167,8 @@ services/runtime/
   scripts/         Primary CLI control client, local worker, direct runner, minimizer, report export
   tests/           Pure checks and local browser integration tests
 services/control-plane/
-  main.go          Durable versioned run, lease, event, cancellation, and completion API
-  migrations/      PostgreSQL lifecycle schema
+  main.go          Durable run, lease, event, result, artifact, cancellation, and completion API
+  migrations/      PostgreSQL lifecycle and result metadata schema
 deploy/local/      Exact-digest loopback Docker Compose stack
 generated-tests/   Model-free Playwright regressions emitted from confirmed plans
   project-brief.md  Product direction and phased build brief

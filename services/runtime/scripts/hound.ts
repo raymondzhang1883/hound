@@ -1,9 +1,9 @@
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { lstat, mkdir, open, readFile, readdir, rename } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
-import { buildReportProjection, renderHtmlReport, reportOutputAncestors, reportRunIdPattern, terminalSummary, type ReportInput, type ReportProjection } from '../src/report.js';
+import { join, relative, resolve } from 'node:path';
+import { lstat, readFile, readdir } from 'node:fs/promises';
+import { reportOutput, writeHtml } from '../src/report-files.js';
+import { buildReportProjection, renderHtmlReport, reportRunIdPattern, terminalSummary, type ReportInput, type ReportProjection } from '../src/report.js';
 
 const root = resolve(fileURLToPath(new URL('../../../', import.meta.url)));
 const runRoot = join(root, '.hound/runs');
@@ -22,7 +22,9 @@ const help = `Hound CLI (terminal-first local interface)
   ./hound runs [--json] [--limit <1..100>]
   ./hound runs --local [--json] [--limit <1..100>]
   ./hound show --run-id <id> [--json]
+  ./hound show --local --run-id <historical-id> [--json]
   ./hound report --run-id <id> [--output <workspace-relative.html>]
+  ./hound report --local --run-id <historical-id> [--output <workspace-relative.html>]
 
 hunt submits a durable run and streams it; worker executes owned fixture jobs. --local retains
 the direct development runner. minimize uses fresh deterministic fixture pairs.
@@ -76,26 +78,6 @@ async function list(limit: number) {
   return reports;
 }
 
-function relativeOutput(value: string | undefined, runId: string) {
-  const requested = value ?? `.hound/reports/${runId}.html`;
-  if (isAbsolute(requested) || !requested.endsWith('.html') || requested.split(/[\\/]/).some(part => part === '..' || part === '.')) throw new Error('invalid_output_path');
-  const output = resolve(root, requested); const within = relative(root, output);
-  if (!within || within.startsWith(`..${sep}`) || within === '..') throw new Error('invalid_output_path');
-  return output;
-}
-
-async function atomicHtml(path: string, html: string) {
-  const parent = dirname(path); await mkdir(parent, { recursive: true, mode: 0o700 });
-  for (const directory of reportOutputAncestors(root, path)) {
-    const metadata = await lstat(directory); if (metadata.isSymbolicLink() || !metadata.isDirectory()) throw new Error('unsafe_output_directory');
-  }
-  try { const existing = await lstat(path); if (existing.isSymbolicLink() || !existing.isFile()) throw new Error('unsafe_output_file'); }
-  catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
-  const temporary = `${path}.${randomUUID()}.tmp`; const file = await open(temporary, 'wx', 0o600);
-  try { await file.writeFile(html); await file.sync(); } finally { await file.close(); }
-  await rename(temporary, path);
-}
-
 async function main() {
   const [command, ...rest] = process.argv.slice(2);
   if (!command || command === 'help' || command === '--help' || command === '-h') { console.log(help); return; }
@@ -127,7 +109,7 @@ async function main() {
     const report = await projection(runId, true);
     if (command === 'show') { console.log(args.values.json ? JSON.stringify(report, null, 2) : terminalSummary(report)); return; }
     if (!report.finding.confirmed) throw new Error('report_requires_confirmed_finding');
-    const output = relativeOutput(args.values.output, runId); await atomicHtml(output, renderHtmlReport(report));
+    const output = reportOutput(root, args.values.output, runId); await writeHtml(root, output, renderHtmlReport(report));
     console.log(`HTML report: ${relative(root, output)}`);
     console.log('The CLI summary and private journals remain the source of truth.');
     return;
