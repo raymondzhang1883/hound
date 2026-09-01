@@ -1,5 +1,7 @@
 # Hound
 
+[![CI](https://github.com/raymondzhang1883/hound/actions/workflows/ci.yml/badge.svg)](https://github.com/raymondzhang1883/hound/actions/workflows/ci.yml)
+
 Hound is a CLI-first authorization regression tester for multi-user web applications. A bounded browser agent explores a candidate, deterministic code freezes and replays suspicious behavior against fresh baseline and candidate state, and confirmed findings become ordinary Playwright regression tests.
 
 The implemented vertical slice tests one invariant in a developer-owned collaborative document fixture:
