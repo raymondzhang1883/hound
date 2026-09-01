@@ -18,6 +18,9 @@ const help = `Hound local control plane
 
 async function initialize() {
   await mkdir(join(root, '.hound'), { recursive: true, mode: 0o700 });
+  const leaseDuration = process.env.HOUND_LEASE_DURATION?.trim() || '30s';
+  const durationMatch = /^([1-9]\d{0,2})s$/.exec(leaseDuration);
+  if (!durationMatch || Number(durationMatch[1]) > 300) throw new Error('invalid_lease_duration');
   let created = false;
   try {
     const file = await open(environmentPath, 'wx', 0o600);
@@ -26,7 +29,7 @@ async function initialize() {
         `HOUND_POSTGRES_PASSWORD=${randomBytes(32).toString('hex')}`,
         `HOUND_WORKER_KEY=${randomBytes(32).toString('hex')}`,
         'HOUND_CONTROL_PORT=8090',
-        'HOUND_LEASE_DURATION=30s',
+        `HOUND_LEASE_DURATION=${leaseDuration}`,
         '',
       ].join('\n'));
       await file.sync(); created = true;
