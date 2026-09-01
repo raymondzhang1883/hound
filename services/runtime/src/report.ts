@@ -210,6 +210,7 @@ export function attachMinimizationProjection(source: ReportProjection, input: Re
 const escape = (value: unknown) => String(value).replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
 const duration = (ms: number) => ms < 1_000 ? `${ms} ms` : ms < 60_000 ? `${(ms / 1_000).toFixed(1)} s` : `${(ms / 60_000).toFixed(1)} min`;
 const money = (value: number) => `$${value.toFixed(4)}`;
+const counted = (value: number, singular: string, plural = `${singular}s`) => `${value} ${value === 1 ? singular : plural}`;
 const titleCase = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, part => part.toUpperCase());
 const actionList = (items: ReportAction[], label: string) => `<ol class="timeline" aria-label="${escape(label)}">${items.map(item => `<li class="action ${item.probe ? 'probe' : ''}">
   <span class="step">${item.index + 1}</span><span class="actor ${item.actor}">${escape(item.actor)}</span>
@@ -226,7 +227,7 @@ export function renderHtmlReport(report: ReportProjection) {
     <article><span class="eyebrow">Candidate</span><strong class="bad">${escape(titleCase(report.comparison.candidate.result))}</strong><p>Candidate persisted the removed member's write.</p></article>
   </div>` : '<p class="empty">No comparable paired replay was recorded.</p>';
   const metrics = [
-    ['Exploration', duration(report.exploration.elapsedMs), `${report.exploration.trials.length} trials`],
+    ['Exploration', duration(report.exploration.elapsedMs), counted(report.exploration.trials.length, 'trial')],
     ['Model calls', report.exploration.accounting.calls, money(report.exploration.accounting.estimatedCostUsd)],
     ['Trajectory', minimized ? `${minimized.originalLength} → ${minimized.minimizedLength}` : report.exploration.originalActions.length, minimized ? 'deletion-minimal' : 'original actions'],
     ['Confirmations', minimized?.confirmations ?? 0, minimized ? 'fresh paired replays' : 'not minimized'],
@@ -242,9 +243,9 @@ export function renderHtmlReport(report: ReportProjection) {
 <div class="meta">Run ${escape(report.runId)}<br>Invariant ${escape(report.invariant.id)} · Revision ${escape(report.source.revision.slice(0, 12))} · Generated ${escape(report.generatedAt)}</div></section>
 <section class="metrics">${metrics.map(([label, value, note]) => `<div class="metric"><span>${escape(label)}</span><strong>${escape(value)}</strong><span>${escape(note)}</span></div>`).join('')}</section>
 <section class="section"><div class="section-head"><div><span class="eyebrow">Paired oracle</span><h2>Same setup. Different authorization.</h2></div><p>${escape(report.invariant.text)}</p></div>${comparison}</section>
-${minimized ? `<section class="section"><div class="section-head"><div><span class="eyebrow">Counterexample</span><h2>Deletion-minimal reproduction</h2></div><p>${minimized.attempts} proposals, ${minimized.acceptedDeletions} accepted deletions, ${minimized.dependencySkips} dependency skips, and ${minimized.confirmations} fresh confirmations.</p></div>${actionList(minimized.actions, 'Minimized browser actions')}</section>` : report.exploration.originalActions.length ? `<section class="section"><div class="section-head"><div><span class="eyebrow">Trajectory</span><h2>Original reproduction</h2></div></div>${actionList(report.exploration.originalActions, 'Original browser actions')}</section>` : ''}
+${minimized ? `<section class="section"><div class="section-head"><div><span class="eyebrow">Counterexample</span><h2>Deletion-minimal reproduction</h2></div><p>${counted(minimized.attempts, 'proposal')}, ${counted(minimized.acceptedDeletions, 'accepted deletion')}, ${counted(minimized.dependencySkips, 'dependency skip')}, and ${counted(minimized.confirmations, 'fresh confirmation')}.</p></div>${actionList(minimized.actions, 'Minimized browser actions')}</section>` : report.exploration.originalActions.length ? `<section class="section"><div class="section-head"><div><span class="eyebrow">Trajectory</span><h2>Original reproduction</h2></div></div>${actionList(report.exploration.originalActions, 'Original browser actions')}</section>` : ''}
 <section class="section"><div class="section-head"><div><span class="eyebrow">Run record</span><h2>Evidence at a glance</h2></div><p>Allowlisted projection only. Raw observations, credentials, provider text, HTTP bodies, and private journal paths are excluded.</p></div><div class="split">
-<article class="card"><dl class="facts"><dt>Policy</dt><dd>${escape(report.exploration.policy.promptVersion)}</dd><dt>Model</dt><dd>${escape(report.exploration.policy.model)}</dd><dt>Trials</dt><dd>${report.exploration.trials.length}</dd><dt>Elapsed</dt><dd>${escape(duration(report.exploration.elapsedMs))}</dd><dt>Estimated cost</dt><dd>${escape(money(report.exploration.accounting.estimatedCostUsd))}</dd><dt>Unknown usage calls</dt><dd>${report.exploration.accounting.unknownUsageCalls}</dd>${minimized ? `<dt>Minimizer</dt><dd>${escape(duration(minimized.elapsedMs))} · ${minimized.modelCalls} model calls</dd>` : ''}</dl></article>
+<article class="card"><dl class="facts"><dt>Policy</dt><dd>${escape(report.exploration.policy.promptVersion)}</dd><dt>Model</dt><dd>${escape(report.exploration.policy.model)}</dd><dt>Trials</dt><dd>${report.exploration.trials.length}</dd><dt>Elapsed</dt><dd>${escape(duration(report.exploration.elapsedMs))}</dd><dt>Estimated cost</dt><dd>${escape(money(report.exploration.accounting.estimatedCostUsd))}</dd><dt>Unknown usage calls</dt><dd>${report.exploration.accounting.unknownUsageCalls}</dd>${minimized ? `<dt>Minimizer</dt><dd>${escape(duration(minimized.elapsedMs))} · ${counted(minimized.modelCalls, 'model call')}</dd>` : ''}</dl></article>
 <article class="card"><span class="eyebrow">Generated regression</span>${report.regression ? `<p><strong>${escape(report.regression.path)}</strong></p><div class="code">${escape(report.regression.command)}\n\n# Expected to fail with the seeded regression\n${escape(report.regression.seededCommand)}</div><p class="meta">SHA-256 ${escape(report.regression.sha256)}</p>` : '<p class="empty">No confirmed generated regression is attached.</p>'}</article></div></section>
 <footer class="footer"><span>Generated by the Hound CLI · static secondary artifact</span><span>CLI records remain the source of truth</span></footer>
 </main></body></html>`;
@@ -258,8 +259,8 @@ export function terminalSummary(report: ReportProjection) {
     `Invariant  ${report.invariant.text}`,
   ];
   if (report.comparison) lines.push(`Pair       baseline=${report.comparison.baseline.result} candidate=${report.comparison.candidate.result}`);
-  lines.push(`Explore    ${report.exploration.trials.length} trials · ${report.exploration.accounting.calls} model calls · ${money(report.exploration.accounting.estimatedCostUsd)} · ${duration(report.exploration.elapsedMs)}`);
-  if (report.minimization) lines.push(`Minimize   ${report.minimization.originalLength} → ${report.minimization.minimizedLength} actions · ${report.minimization.confirmations} confirmations · ${report.minimization.modelCalls} model calls`);
+  lines.push(`Explore    ${counted(report.exploration.trials.length, 'trial')} · ${counted(report.exploration.accounting.calls, 'model call')} · ${money(report.exploration.accounting.estimatedCostUsd)} · ${duration(report.exploration.elapsedMs)}`);
+  if (report.minimization) lines.push(`Minimize   ${report.minimization.originalLength} → ${report.minimization.minimizedLength} actions · ${counted(report.minimization.confirmations, 'confirmation')} · ${counted(report.minimization.modelCalls, 'model call')}`);
   if (report.regression) lines.push(`Regression ${report.regression.path}`);
   return lines.join('\n');
 }

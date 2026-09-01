@@ -1,39 +1,105 @@
 # Hound
 
-Hunt stateful authorization regressions before they ship.
+Hound is a CLI-first authorization regression tester for multi-user web applications. A bounded browser agent explores a candidate, deterministic code freezes and replays suspicious behavior against fresh baseline and candidate state, and confirmed findings become ordinary Playwright regression tests.
 
-Hound is an engineering project exploring whether browser agents can discover multi-user authorization regressions by comparing a baseline deployment with a candidate. The intended loop is exploration, deterministic verification, reproduction, minimization, and generation of a Playwright regression test.
+The implemented vertical slice tests one invariant in a developer-owned collaborative document fixture:
 
-**Current milestone:** Hound's bounded simple agent discovered the seeded regression, deterministic replay verified it against fresh candidate and baseline state, and the model-free paired minimizer reduced the recorded trajectory from 14 to 12 browser actions. Three fresh confirmation pairs reproduced the result, and Hound emitted a conventional Playwright regression that passes on the baseline and fails on the seeded candidate. The CLI now submits durable runs to a loopback Go/Postgres control plane, streams sanitized events, supports detached execution and cancellation, and uses a separately authenticated local browser worker. Workers commit a checksummed replay plan and allowlisted result before completion, so `show` and the secondary HTML report no longer depend on worker-local files. Historical journals remain available through explicit `--local` commands. Two live control-plane smoke runs added $0.015702 in estimated model cost; cumulative estimated model cost is $0.547931.
+> Once a member is removed from a workspace, that member must no longer be able to modify its documents.
 
-## The first regression
+Hound is a focused engineering project, not a general vulnerability scanner. The current application adapter supports the included Fieldnotes fixture. Static HTML is a secondary export; the CLI and durable result records are the source of truth.
 
-The fixture, **Fieldnotes**, is a small collaborative document application. Alice creates a workspace and invites Bob. Bob accepts, opens a document, and can edit it legitimately. Alice then removes Bob while he keeps the editor open.
+## Run the complete demo
 
-| Attempt | Baseline | Candidate |
-| --- | --- | --- |
-| Bob edits while a current member | `200`, edit persists | `200`, edit persists |
-| Bob edits after removal, in the session that read the document | `403`, document unchanged | `200`, unauthorized edit persists |
-| Bob reads after removal | `403` | `403` |
-| Bob edits after removal using a fresh session | `403` | `403` |
-
-The candidate deliberately trusts a session's cached workspace grant on writes. The baseline checks current membership. Authentication survives membership removal in both versions. The application interface is identical; a startup setting selects the one seeded difference.
-
-These are expected behaviors verified by the fixture acceptance suite, not autonomous-discovery benchmark results.
-
-## Run locally
-
-Requires Node.js 22 or later and npm. The commands below target macOS/Linux shells. The fixture and credential-free test suites need no database, Docker, cloud account, or model API key. Durable CLI runs additionally use Docker for the local control plane; only live model exploration needs an API key.
+You need Node.js 22+, npm, Docker with Compose, and a macOS or Linux shell.
 
 ```sh
 npm ci
 npm run setup:browser
-npm run check
-npm run demo
-./hound --help
+./hound demo
 ```
 
-Start the durable local control plane through Hound itself:
+The demo needs no API key and makes **zero external model requests**. It starts the loopback control plane, runs fresh baseline and candidate fixtures in Chromium, feeds authored simulated responses through the production provider parser and browser controller, verifies the finding with paired replay, minimizes the plan without a model, stores the result, exports an HTML report, and executes the generated regression against both fixture variants.
+
+Expect several minutes of runtime because deletion-minimality is tested with many fresh-state browser pairs. The final output looks like this:
+
+```text
+Confirmed paired result; policy decisions: 14; external model requests: 0.
+Outcome: minimized; 14 -> 11 steps; deletion-minimal: true.
+CONFIRMED  Removed member retained document write access
+Pair       baseline=denied candidate=violation
+Minimize   14 → 11 actions · 1 confirmation · 0 model calls
+Regression generated-tests/removed-member-write.spec.ts
+Generated regression rejected the seeded candidate as expected.
+```
+
+The demo prints its durable run ID and report path. Inspect the same result from the terminal at any time:
+
+```sh
+./hound runs
+./hound show --run-id <run-id>
+./hound report --run-id <run-id>
+./hound test-generated
+```
+
+You can also review the tracked example finding report, which is a sanitized static export from the credential-free demo.
+
+## What is technically interesting
+
+- **Agent authority is narrow.** The policy chooses one validated click, fill, select, observe, or known-route navigation from a bounded DOM observation. It cannot run shell commands, issue arbitrary requests, execute browser code, or choose a target URL.
+- **The model is outside the verdict boundary.** Authoritative state inspection establishes whether a write persisted. The same logical plan must reproduce with equivalent setup, a baseline denial, and a candidate violation.
+- **Replay uses fresh state.** Recorded actions carry locator recipes and logical resource references so independently generated workspace, invitation, and document IDs can be rebound on each deployment.
+- **Findings become maintainable tests.** A paired, deletion-minimal plan exports as a self-contained Playwright spec that passes on the baseline and fails on the seeded candidate.
+- **Execution is durable.** A Go control plane and PostgreSQL provide queued runs, leases, epochs, heartbeats, retries, cancellation, idempotent events, stale-worker fencing, terminal completion gating, and sanitized result reads.
+- **Artifacts are integrity checked.** Replay and minimized plans live in a private content-addressed volume with SHA-256 validation. Published result projections omit credentials, provider text, raw observations, HTTP bodies, addresses, and private paths.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    CLI[Hound CLI] -->|REST + SSE| CP[Go control plane]
+    CP --> DB[(PostgreSQL)]
+    CP --> ART[(Checksummed artifact volume)]
+    WORKER[TypeScript worker] -->|lease, heartbeat, events, results| CP
+    WORKER --> POLICY[Bounded model policy]
+    WORKER --> RUNTIME[Playwright runtime + deterministic oracle]
+    RUNTIME --> BASE[Fresh Fieldnotes baseline]
+    RUNTIME --> CAND[Fresh Fieldnotes candidate]
+    MIN[Model-free minimizer] --> CP
+    MIN --> BASE
+    MIN --> CAND
+    MIN --> TEST[Generated Playwright regression]
+    CLI --> REPORT[Static HTML export]
+```
+
+The versioned application adapter contains Fieldnotes startup, fictional actor credentials, authenticated authoritative inspection, reset semantics, and cleanup. Core worker and minimizer orchestration no longer imports fixture startup directly. A second adapter is a future generalization experiment, not a current compatibility claim.
+
+## Finding lifecycle
+
+1. Alice and Bob receive independent authenticated browser contexts on a fresh candidate fixture.
+2. The policy explores normal UI controls under a decision and cost budget.
+3. Deterministic inspection recognizes a suspicious post-removal write that actually persisted.
+4. Hound freezes the exact trajectory and replays it against fresh baseline and candidate fixtures.
+5. A finding is confirmed only when the baseline denies the same write and the candidate reproduces it with equivalent setup.
+6. The model-free minimizer tests deletions with fresh pairs and confirms the reduced plan.
+7. Hound publishes a sanitized durable result, minimized replay artifact, static report, and generated Playwright test.
+
+The included candidate intentionally trusts a retained session's cached workspace grant for writes. Both variants deny post-removal reads and fresh-session writes; only the warmed candidate session preserves the unauthorized write. Fixture acceptance tests verify that this is the sole seeded behavioral difference.
+
+## Evidence levels
+
+Hound keeps three kinds of evidence separate:
+
+| Evidence | What it establishes | What it does not establish |
+| --- | --- | --- |
+| Deterministic tests | Runtime, oracle, replay, control-plane, minimizer, and exporter behavior | Agent discovery ability |
+| Simulated-provider demo | Complete integration through real browsers and the provider wire parser | Autonomous discovery or detection rate |
+| Live pilots | Actual model calls, cost, failure modes, positive runs, and negative controls | A statistically useful benchmark |
+
+The demo's authored sequence is explicit in `services/runtime/src/demo-policy.ts` and is shared by positive and both-correct browser integrations. Measured live-pilot records and their limits are documented in agent setup and results and evaluation. A nondetection is never labeled a security pass.
+
+## Use the CLI
+
+Start the durable loopback stack:
 
 ```sh
 ./hound control up
@@ -41,143 +107,77 @@ Start the durable local control plane through Hound itself:
 ./hound hunt --preflight
 ```
 
-`control up` creates owner-readable random credentials in the ignored `.hound/control-plane.env`, builds exact-digest Go and PostgreSQL images, and publishes only the control API on loopback. PostgreSQL is not published. `control down` stops the containers and retains the database volume.
+`control up` creates owner-readable random credentials in ignored `.hound/` storage, builds digest-pinned Go and PostgreSQL images, publishes only the control API on `127.0.0.1`, and leaves PostgreSQL private to the Compose network.
 
-The demo launches two independent processes and starts a fresh execution in each:
-
-| Deployment | Browser URL | Protected harness |
-| --- | --- | --- |
-| Baseline | http://127.0.0.1:4311 | http://127.0.0.1:4411 |
-| Candidate | http://127.0.0.1:4312 | http://127.0.0.1:4412 |
-
-Local demo credentials are intentionally non-secret: Alice uses `alice-local-demo`; Bob uses `bob-local-demo`. They are only fixture accounts. **Do not use real data, real passwords, or expose these servers to a network.** The candidate is intentionally vulnerable and both listeners bind to loopback only.
-
-Use separate browser profiles for Alice and Bob. Ordinary tabs share cookies, and multiple private windows may also share a private session. The browser tests create independent Playwright contexts automatically.
-
-## Walk through the demo
-
-Perform this sequence once on each deployment:
-
-1. Sign in as Alice, create a workspace, and send Bob an invitation.
-2. In Bob's separate browser profile, sign in, click **Refresh**, and accept the invitation.
-3. Open the workspace and its shared document as Bob. Save a legitimate edit.
-4. In Alice's workspace, click **Refresh members**, then **Remove Bob**.
-5. Without reloading Bob's editor or signing out, change the document and click **Save document**.
-
-The baseline shows `403`. The candidate saves the edit. Alice can open the document afterward to see whether the edit actually persisted. Reloading Bob's page is denied in both versions.
-
-`Ctrl+C` stops both processes and removes the private demo manifest. Run `npm run demo` again for clean state. State is intentionally discarded on restart. Assets are loaded on startup, so restart after code/UI changes.
-
-## Local agent pilot
-
-The initial model is **GPT-5.4 mini**, pinned to `gpt-5.4-mini-2026-03-17` with medium reasoning. The model decision explains the cost/capability tradeoff. The working `hound-simple-browser@2` policy remains a one-primitive loop; it adds a generic causal authorization-test method without a fixture sequence or planner. One positive and one both-correct live invocation are encouraging integration evidence, not detection- or false-positive-rate estimates.
-
-```sh
-./hound hunt --preflight
-npm run hunt:check
-```
-
-The readiness check makes one loopback health request and no provider request. `hunt:check` runs the complete controller and real fixture browsers with simulated provider responses and an authored test sequence. It verifies a candidate-only result, the both-correct control, and cancellation. It is not an autonomous-discovery benchmark. Add `-- --headed` to watch it.
-
-For live exploration, configure `OPENAI_API_KEY` in the ignored project `.env` file. Start a worker in one terminal, then submit from another with an explicit dollar budget:
+Live autonomous exploration is optional and is the only path that needs a provider key. Put `OPENAI_API_KEY` in the ignored project `.env`, start a worker, and submit a run from another terminal with an explicit dollar allowance:
 
 ```sh
 ./hound worker
+
 # another terminal
 ./hound hunt --case positive --max-cost-usd 1
 ./hound hunt --case negative --max-cost-usd 1
 ```
 
-Each command has a separate estimated spend allowance; the example allocates $2 across the two pilots. Costs depend on actual tokens. No automatic provider retries or model fallback occur. `hunt` streams until terminal by default; `--detach` prints the durable run ID and returns. `status`, `logs`, and `cancel` operate on that ID. Each worker attempt creates fresh loopback fixtures and private records under `.hound/runs/`; it does not borrow the interactive demo. `./hound hunt --local ...` retains the direct development runner. A nondetection is never called a security pass. See the agent setup and results guide before running a paid pilot.
+The policy pins `gpt-5.4-mini-2026-03-17` with medium reasoning. Each command has its own allowance. Hound makes no automatic provider retry and has no hidden model fallback.
 
-## Minimize and export a finding
+Common commands:
 
-Use the run ID of a verified durable `candidate_only_violation` result. The command downloads its checksummed replay artifact, uses fresh owned loopback fixture pairs and Chromium, and publishes the verified minimization. It does not load `.env` or call a model. Historical direct runs remain available through `./hound minimize --local --run-id <id>`.
-
-```sh
-./hound minimize --run-id <positive-run-id>
-npm run test:generated
-HOUND_FIXTURE_MODE=stale-write npm run test:generated
+```text
+hound demo                         credential-free complete demonstration
+hound hunt ...                     submit and follow an owned-fixture hunt
+hound runs                         list durable runs
+hound status <run-id>              inspect lifecycle state
+hound logs <run-id> --follow       stream sanitized events
+hound cancel <run-id>              cancel a queued or running job
+hound show --run-id <run-id>       print the sanitized durable result
+hound minimize --run-id <run-id>   reduce a confirmed plan with zero model calls
+hound report --run-id <run-id>     export a self-contained HTML report
+hound test-generated               execute the exported baseline regression
 ```
 
-The first test command should pass. The explicit seeded-candidate command should fail with `Expected: "denied"` and `Received: "violation"`. A successful minimization writes its private journal under `.hound/minimizations/` and exports [the generated regression](generated-tests/removed-member-write.spec.ts). Export requires a deletion-minimal result and three successful confirmation pairs by default. See the minimizer and exporter guide for the algorithm, evidence, and claim limits.
+Read-only commands launch no browser, fixture, or model. Direct historical runs remain available through explicit `--local` flags.
 
-## CLI first, HTML second
+## Validate the repository
 
-The CLI is Hound's primary interface. It owns execution, terminal status, machine-readable output, result inspection, minimization, and report export:
-
-```sh
-./hound runs
-./hound runs --json | jq '.[0]'
-./hound runs --local
-./hound status <run-id>
-./hound logs <run-id> --follow
-./hound cancel <run-id>
-./hound show --run-id <run-id>
-./hound report --run-id <run-id>
-```
-
-`show` is the default way to understand a durable result. `report` is an explicit secondary export for reviewing or sharing one confirmed finding; it does not start a server or become a separate source of truth. Reports are static, contain no scripts or external assets, and derive from a versioned allowlisted projection that excludes raw observations, provider text, credentials, HTTP bodies, addresses, and private paths. Historical local results use `show --local` or `report --local`. See the CLI and report guide, report design, and durable result contract.
-
-## Tests and evidence
+The default GitHub Actions workflow requires no secret or model credential. Equivalent local checks are:
 
 ```sh
 npm run typecheck
 npm test
 npm run test:browser
-npm run test:runtime
+./hound control up
 npm run test:control
-npm run test:browser -- --repeat-each=3
 ```
 
-`test:control` requires `./hound control up`; it exercises durable creation, concurrent leasing, heartbeat, idempotent and conflicting result/artifact uploads, completion gating, crash-boundary cleanup, cancellation, stale-worker fencing, retry exhaustion, and SSE replay without a browser or provider call.
-
-The state and HTTP tests cover the seeded behavior, session/workspace isolation, member administration boundaries, invitation reuse, conflicting edits, harness authentication, competing execution acquisition, and a request that spans a reset.
-
-Browser tests exercise the real UI as Alice and Bob, check the server's membership state and persisted body/revision, verify fresh-session denial, and check the small-screen layout. They use fresh instances and contexts on each run and do not disturb the interactive demo. The candidate test **passes when the expected seeded bug is observed**; this suite validates the benchmark target.
-
-`npm run test:runtime` exercises the same fixture through Hound's decision executor, records an authored trajectory, and replays it with new sessions and resource IDs. It checks candidate-only, both-correct, and both-buggy outcomes, plus invalid decisions, lost sessions, closed browsers, deadlines, cleanup, and local traffic restrictions. This demonstrates execution and verification without a model API key. It does **not** demonstrate autonomous discovery. `npm run test:generated` runs the exported regression against the correct fixture. See the runtime guide for its interface and limitations.
-
-After browser tests, `test-results/` contains post-login screenshots and selected JSON evidence; `playwright-report/` contains the HTML report. View it with:
+The generated regression has intentionally opposite outcomes:
 
 ```sh
-npx playwright show-report --host 127.0.0.1
+npm run test:generated
+HOUND_FIXTURE_MODE=stale-write npm run test:generated
 ```
 
-Raw traces and authentication headers are not captured. Harness credentials, execution tokens, browser downloads, and reports are excluded from Git. Evidence capture here is deliberately limited; the full artifact/redaction subsystem is a later design step.
+The first command passes against the correct fixture. The second must fail with `Expected: "denied"` and `Received: "violation"`.
 
-## How the final tool will use this fixture
+## Scope and limitations
 
-In-memory storage is a property of the **target application**, not a restriction on Hound's future persistence. A runner controls the fixture through versioned HTTP interfaces and can persist evidence independently.
+- Hound currently supports one application adapter, one invariant, two fictional actors, and local owned fixtures.
+- It does not infer business policy, scan arbitrary sites, or establish that an application is secure.
+- The Fieldnotes target uses in-memory state and a purpose-built authenticated inspection harness.
+- The simulated demo validates orchestration but does not measure autonomous agent performance.
+- The live pilot sample is intentionally small and should not be used to claim a detection or false-positive rate.
+- There is no hosted dashboard, public API, team account system, cloud worker, or production deployment story.
 
-The runner acquires an exclusive execution through the protected harness, creates Alice/Bob browser contexts, explores through normal UI/API routes, inspects authoritative state for its oracle, and ends the execution. Every paired replay starts from fresh state, resolving generated resource IDs independently in each deployment. No store internals need to be imported by the runner.
+Use Hound only on systems and accounts you own or are explicitly authorized to test. See the [security policy](SECURITY.md) and [contribution guide](CONTRIBUTING.md).
 
-See the fixture integration guide for API shapes, configuration, credentials, reset semantics, and limitations. The manual demo writes its active execution handles and harness credentials to the ignored, owner-readable `.hound/demo.json`; keep that file out of model input and published artifacts.
-
-## Repository layout
+## Repository map
 
 ```text
-apps/fixture/
-  src/             In-memory state, actor server, protected harness, harness client
-  public/          Fieldnotes browser UI
-  scripts/         Two-process local demo launcher
-  tests/           State, HTTP, and Playwright acceptance checks
-services/runtime/
-  src/             Browser execution, control client, oracle/replay, minimizer/exporter, provider policy, journal
-  scripts/         Primary CLI control client, local worker, direct runner, minimizer, report export
-  tests/           Pure checks and local browser integration tests
-services/control-plane/
-  main.go          Durable run, lease, event, result, artifact, cancellation, and completion API
-  migrations/      PostgreSQL lifecycle and result metadata schema
-deploy/local/      Exact-digest loopback Docker Compose stack
-generated-tests/   Model-free Playwright regressions emitted from confirmed plans
-  project-brief.md  Product direction and phased build brief
-  fixture.md       How to run, reset, and integrate the benchmark target
-  runtime.md       Deterministic runtime interface, completion, and failure semantics
-  agent.md         Model setup, pilot budgets, private run records, and outcomes
-  cli.md           Primary CLI and secondary static report contract
-  minimization.md  Paired reduction, export workflow, evidence, and limits
-  design-decisions/
+apps/fixture/              Fieldnotes state, UI, actor server, and protected harness
+services/runtime/          Policy, browser execution, oracle, replay, minimizer, CLI
+services/control-plane/    Go lifecycle, result, event, and artifact API
+deploy/local/              Digest-pinned loopback Docker Compose stack
+generated-tests/           Exported model-free Playwright regression
 ```
 
-The browser contract, provider integration, simple causal baseline, and paired minimizer/exporter are implemented following an adversarial review. Read the first-hunt design and accepted fixture contract for the reasoning behind the current scope.
+Start with the runtime contract, durable minimization decision, and CLI/report guide.

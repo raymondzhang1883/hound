@@ -1,8 +1,23 @@
 {
   "name": "hound",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "CLI-first authorization regression testing with bounded browser exploration and deterministic paired replay",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raymondzhang1883/hound.git"
+  },
+  "bugs": {
+    "url": "https://github.com/raymondzhang1883/hound/issues"
+  },
+  "homepage": "https://github.com/raymondzhang1883/hound#readme",
+  "keywords": [
+    "authorization",
+    "playwright",
+    "regression-testing",
+    "security-testing"
+  ],
   "bin": {
     "hound": "./hound"
   },
