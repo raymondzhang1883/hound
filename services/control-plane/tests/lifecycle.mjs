@@ -150,6 +150,12 @@ async function uploadResult(item, value = projection(item), expected = 200) {
   return putJSON(item, `/v1/jobs/${item.jobId}/result`, value, expected);
 }
 
+async function putRunJSON(path, value, expected = 200) {
+  const body = JSON.stringify(value);
+  const sha256 = createHash("sha256").update(body).digest("hex");
+  return request(path, { method: "PUT", expected, headers: { "X-Hound-Worker-Key": workerKey, "X-Hound-Content-SHA256": sha256 }, body });
+}
+
 const firstRun = await createRun();
 const firstLease = await leaseForRun(firstRun.id, "integration-primary");
 assert.equal(firstLease.runId, firstRun.id);
@@ -194,6 +200,32 @@ assert.equal(finished.status, "completed");
 assert.equal(finished.outcome, "candidate_only_violation");
 assert.equal((await request(`/v1/runs/${firstRun.id}/result`)).runId, firstRun.id);
 assert.equal((await request(`/v1/runs/${firstRun.id}/artifacts/replay_plan`)).id, plan.id);
+const minimizedPlan = { ...plan, id: "d".repeat(64) };
+const minimization = {
+  version: 1,
+  sourcePlanId: plan.id,
+  minimization: {
+    outcome: "unchanged", originalLength: 1, minimizedLength: 1, deletionMinimal: true,
+    attempts: 0, acceptedDeletions: 0, dependencySkips: 0, confirmations: 1, elapsedMs: 10, modelCalls: 0,
+    planId: minimizedPlan.id, actions: [{ index: 0, actor: "bob", kind: "click", description: "submits the document write", probe: true }],
+  },
+  regression: {
+    path: "generated-tests/removed-member-write.spec.ts", sha256: "e".repeat(64), command: "npm run test:generated",
+    seededCommand: "HOUND_FIXTURE_MODE=stale-write npm run test:generated",
+  },
+};
+await putRunJSON(`/v1/runs/${firstRun.id}/minimization`, minimization, 409);
+await putRunJSON(`/v1/runs/${firstRun.id}/artifacts/minimized_plan`, minimizedPlan);
+await putRunJSON(`/v1/runs/${firstRun.id}/artifacts/minimized_plan`, minimizedPlan);
+await putRunJSON(`/v1/runs/${firstRun.id}/artifacts/minimized_plan`, { ...minimizedPlan, id: "f".repeat(64) }, 409);
+await putRunJSON(`/v1/runs/${firstRun.id}/minimization`, minimization);
+await putRunJSON(`/v1/runs/${firstRun.id}/minimization`, minimization);
+await putRunJSON(`/v1/runs/${firstRun.id}/minimization`, { ...minimization, regression: { ...minimization.regression, sha256: "f".repeat(64) } }, 409);
+const enriched = await request(`/v1/runs/${firstRun.id}/result`);
+assert.equal(enriched.minimization.planId, minimizedPlan.id);
+assert.equal(enriched.minimization.modelCalls, 0);
+assert.equal(enriched.regression.sha256, minimization.regression.sha256);
+assert.equal((await request(`/v1/runs/${firstRun.id}/artifacts/minimized_plan`)).id, minimizedPlan.id);
 
 const cancelledRun = await createRun("negative");
 const cancelledLease = await leaseForRun(cancelledRun.id, "integration-cancel");

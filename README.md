@@ -92,7 +92,7 @@ Each command has a separate estimated spend allowance; the example allocates $2 
 
 ## Minimize and export a finding
 
-Use the run ID of a verified `candidate_only_violation` result. The command uses fresh owned loopback fixture pairs and Chromium; it does not load `.env` or call a model.
+Use the run ID of a verified durable `candidate_only_violation` result. The command downloads its checksummed replay artifact, uses fresh owned loopback fixture pairs and Chromium, and publishes the verified minimization. It does not load `.env` or call a model. Historical direct runs remain available through `./hound minimize --local --run-id <id>`.
 
 ```sh
 ./hound minimize --run-id <positive-run-id>

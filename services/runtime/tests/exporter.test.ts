@@ -28,5 +28,5 @@ it('minimizer CLI help and invalid IDs make no model or browser request', async 
   const run = (args: string[]) => promisify(execFile)(process.execPath, ['--import', 'tsx', script, ...args], { timeout: 10_000 });
   const help = await run(['--help']);
   assert.match(help.stdout, /zero model calls/i);
-  await assert.rejects(run(['--run-id', '../private']), (error: any) => error.code === 2 && /valid local run ID/.test(error.stderr));
+  await assert.rejects(run(['--run-id', '../private']), (error: any) => error.code === 2 && /valid run ID/.test(error.stderr));
 });

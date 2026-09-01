@@ -11,15 +11,18 @@ import { BrowserExperiment, type ReplayPlan } from '../src/experiment.js';
 import { minimize, type MinimizationResult } from '../src/minimizer.js';
 import { exportPlaywrightRegression } from '../src/exporter.js';
 import { RunJournal } from '../src/journal.js';
+import { ControlApi, controlEnvironment } from '../src/control-api.js';
+import { attachMinimizationProjection, validateReportPlan, type ReportProjection } from '../src/report.js';
 
 const root = fileURLToPath(new URL('../../../', import.meta.url));
-const help = `Hound local paired minimizer (owned loopback fixtures only; zero model calls)
+const help = `Hound paired minimizer (owned loopback fixtures only; zero model calls)
 
   ./hound minimize --run-id <positive-run-id>
+  ./hound minimize --local --run-id <historical-positive-run-id>
 
-Options: --run-id <id>, --confirmations <1..5>, --headed, --help
-Reads one owner-private verified plan under .hound/runs, starts fresh local fixture pairs,
-writes a private minimization journal, and exports generated-tests/removed-member-write.spec.ts.
+Options: --run-id <id>, --confirmations <1..5>, --headed, --local, --help
+Reads a durable verified plan by default, starts fresh local fixture pairs, writes a private
+minimization journal, publishes the sanitized result, and exports a Playwright regression.
 `;
 const runPattern = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d{3}Z-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -31,35 +34,59 @@ async function atomicSource(path: string, source: string) {
   await rename(temporary, path);
 }
 
+async function putJSON(api: ControlApi, workerKey: string, path: string, value: unknown) {
+  const body = JSON.stringify(value); const sha256 = createHash('sha256').update(body).digest('hex');
+  await api.request(path, { method: 'PUT', headers: { 'X-Hound-Worker-Key': workerKey, 'X-Hound-Content-SHA256': sha256 }, body });
+}
+
 async function main() {
   let args;
-  try { args = parseArgs({ options: { 'run-id': { type: 'string' }, confirmations: { type: 'string' }, headed: { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }); }
+  try { args = parseArgs({ options: { 'run-id': { type: 'string' }, confirmations: { type: 'string' }, headed: { type: 'boolean' }, local: { type: 'boolean' }, help: { type: 'boolean' } }, strict: true }); }
   catch { console.error('Invalid arguments. Run ./hound minimize --help.'); process.exitCode = 2; return; }
   if (args.values.help) { console.log(help); return; }
   const runId = args.values['run-id'] ?? '';
   const confirmations = args.values.confirmations === undefined ? 3 : Number(args.values.confirmations);
   if (!runPattern.test(runId) || !Number.isInteger(confirmations) || confirmations < 1 || confirmations > 5) {
-    console.error('A valid local run ID and confirmations from 1 to 5 are required.'); process.exitCode = 2; return;
+    console.error('A valid run ID and confirmations from 1 to 5 are required.'); process.exitCode = 2; return;
   }
   if (!existsSync(process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH ?? chromium.executablePath())) {
     console.error('Chromium is missing. Run npm run setup:browser.'); process.exitCode = 2; return;
   }
   const directory = join(root, '.hound/runs', runId);
-  const paths = { config: join(directory, 'config.json'), result: join(directory, 'result.json'), plan: join(directory, 'plan.json') };
-  try {
-    for (const path of Object.values(paths)) {
-      const metadata = await lstat(path);
-      if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 2 * 1024 * 1024) throw new Error('invalid_source_record');
-    }
-  } catch { console.error('The run is missing small regular config, result, or plan records.'); process.exitCode = 2; return; }
-  let sourceConfig: any; let sourceResult: any; let plan: ReplayPlan;
-  try {
-    sourceConfig = JSON.parse(await readFile(paths.config, 'utf8'));
-    sourceResult = JSON.parse(await readFile(paths.result, 'utf8'));
-    plan = JSON.parse(await readFile(paths.plan, 'utf8'));
-  } catch { console.error('The source run records are not valid JSON.'); process.exitCode = 2; return; }
-  if (sourceConfig.case !== 'positive' || sourceResult.outcome !== 'candidate_only_violation' || sourceResult.planId !== plan.id) {
-    console.error('Minimization requires a verified candidate-only positive run and its exact saved plan.'); process.exitCode = 2; return;
+  let plan: ReplayPlan; let durable: { api: ControlApi; workerKey: string; report: ReportProjection } | undefined;
+  if (args.values.local) {
+    const paths = { config: join(directory, 'config.json'), result: join(directory, 'result.json'), plan: join(directory, 'plan.json') };
+    try {
+      for (const path of Object.values(paths)) {
+        const metadata = await lstat(path);
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 2 * 1024 * 1024) throw new Error('invalid_source_record');
+      }
+      const sourceConfig: any = JSON.parse(await readFile(paths.config, 'utf8'));
+      const sourceResult: any = JSON.parse(await readFile(paths.result, 'utf8'));
+      plan = JSON.parse(await readFile(paths.plan, 'utf8'));
+      validateReportPlan(plan, sourceResult.planId);
+      if (sourceConfig.case !== 'positive' || sourceResult.outcome !== 'candidate_only_violation' || sourceResult.planId !== plan.id) throw new Error('invalid_source_record');
+    } catch { console.error('The local run is missing a verified candidate-only result and exact small regular plan records.'); process.exitCode = 2; return; }
+  } else {
+    try {
+      const environment = await controlEnvironment(root); const api = new ControlApi(environment.baseURL);
+      const report = await api.result(runId);
+      if (!report?.finding.confirmed || report.source.case !== 'positive' || !report.exploration.planId || environment.workerKey.length < 32) throw new Error('invalid_source_record');
+      if (report.minimization && report.regression) {
+        const existing = (await api.artifact<ReplayPlan>(runId, 'minimized_plan'))!;
+        validateReportPlan(existing, report.minimization.planId);
+        const source = exportPlaywrightRegression(existing); const sha256 = createHash('sha256').update(source).digest('hex');
+        if (sha256 !== report.regression.sha256) throw new Error('inconsistent_generated_regression');
+        await atomicSource(join(root, report.regression.path), source);
+        console.log(`Run ${runId} is already durably minimized: ${report.minimization.originalLength} -> ${report.minimization.minimizedLength} steps.`);
+        console.log(`Generated regression: ${report.regression.path} (${sha256.slice(0, 12)}…).`);
+        return;
+      }
+      plan = (await api.artifact<ReplayPlan>(runId, 'replay_plan'))!;
+      const projected = validateReportPlan(plan, report.exploration.planId);
+      if (projected.actions.length !== report.exploration.originalActions.length || projected.probeActor !== report.finding.actor || projected.probeResource !== report.finding.resource) throw new Error('inconsistent_source_record');
+      durable = { api, workerKey: environment.workerKey, report };
+    } catch { console.error('The durable run is missing a verified candidate-only result and exact replay artifact.'); process.exitCode = 2; return; }
   }
   const credentials = { alice: `alice-${randomBytes(24).toString('hex')}`, bob: `bob-${randomBytes(24).toString('hex')}` };
   const keys = { baseline: randomBytes(32).toString('hex'), candidate: randomBytes(32).toString('hex') };
@@ -118,7 +145,17 @@ async function main() {
     }
   }
   const { plan: _plan, ...summary } = result;
-  await journal.write('result', { ...summary, modelCalls: 0, generated });
+  const journalResult = { ...summary, modelCalls: 0, generated };
+  await journal.write('result', journalResult);
+  if (verified && generated && durable) {
+    const config = { version: 1, sourceRunId: runId, sourcePlanId: plan.id };
+    const report = attachMinimizationProjection(durable.report, { config, result: journalResult, plan: result.plan });
+    await putJSON(durable.api, durable.workerKey, `/v1/runs/${encodeURIComponent(runId)}/artifacts/minimized_plan`, result.plan);
+    await putJSON(durable.api, durable.workerKey, `/v1/runs/${encodeURIComponent(runId)}/minimization`, {
+      version: 1, sourcePlanId: plan.id, minimization: report.minimization, regression: report.regression,
+    });
+    console.log('Published durable minimization and minimized replay plan.');
+  }
   console.log(`Outcome: ${result.outcome}; ${result.originalLength} -> ${result.minimizedLength} steps; deletion-minimal: ${result.deletionMinimal}.`);
   if (generated) console.log(`Generated regression: ${generated.path} (${generated.sha256.slice(0, 12)}…).`);
   process.exitCode = verified ? 0 : result.outcome === 'cancelled' ? 130 : 1;

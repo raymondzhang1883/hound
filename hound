@@ -44,6 +44,10 @@ case "${1:-}" in
   minimize)
     shift
     export PLAYWRIGHT_BROWSERS_PATH="$HOUND_ROOT/.hound/browsers"
+    if [ "${1:-}" = "--local" ]; then
+      shift
+      exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/minimize.ts" --local "$@"
+    fi
     exec node --import tsx "$HOUND_ROOT/services/runtime/scripts/minimize.ts" "$@"
     ;;
 esac

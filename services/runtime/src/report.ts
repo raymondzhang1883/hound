@@ -41,6 +41,8 @@ export interface ReportInput {
   generatedAt?: string;
 }
 
+export interface ReportMinimizationInput { config: unknown; result: unknown; plan: unknown }
+
 export class ReportError extends Error { constructor(readonly code: string) { super(code); } }
 function fail(code: string): never { throw new ReportError(code); }
 function object(value: unknown, code = 'invalid_report_record'): Record<string, unknown> {
@@ -110,6 +112,8 @@ function actions(value: unknown, expectedId?: string): { id: string; probeActor:
   return { id, probeActor, probeResource, actions: safe };
 }
 
+export function validateReportPlan(value: unknown, expectedId?: string) { return actions(value, expectedId); }
+
 function replay(value: unknown, expectedPlanId: string) {
   const data = object(value); const planId = string(data.planId, 64);
   if (planId !== expectedPlanId || typeof data.setupEquivalent !== 'boolean') fail('inconsistent_report_record');
@@ -172,28 +176,34 @@ export function buildReportProjection(input: ReportInput): ReportProjection {
       accounting: { calls: integer(accounting.calls, 100_000), unknownUsageCalls: integer(accounting.unknownUsageCalls, 100_000), estimatedCostUsd: number(accounting.estimatedCostUsd, 10_000) },
     },
   };
-  if (input.minimization) {
-    if (!confirmed || !planId) fail('minimization_without_finding');
-    const minConfig = object(input.minimization.config); const minResult = object(input.minimization.result);
-    if (minConfig.version !== 1 || minResult.version !== 1 || minConfig.sourceRunId !== input.runId || minConfig.sourcePlanId !== planId) fail('inconsistent_minimization_record');
-    const minOutcome = enumValue(minResult.outcome, ['minimized', 'unchanged'] as const);
-    if (minResult.deletionMinimal !== true || !Array.isArray(minResult.attempts) || !Array.isArray(minResult.confirmations) ||
-        minResult.confirmations.some(item => object(item).outcome !== 'candidate_only_violation')) fail('unconfirmed_minimization_record');
-    const minPlan = actions(input.minimization.plan);
-    const rawAttempts = minResult.attempts as unknown[]; const rawConfirmations = minResult.confirmations as unknown[];
-    const attempts = rawAttempts.map(item => object(item));
-    const originalLength = integer(minResult.originalLength, 120); const minimizedLength = integer(minResult.minimizedLength, 120);
-    if (originalLength !== sourcePlan?.actions.length || minimizedLength !== minPlan.actions.length || minPlan.probeActor !== sourcePlan.probeActor || minPlan.probeResource !== sourcePlan.probeResource) fail('inconsistent_minimization_record');
-    projection.minimization = {
-      outcome: minOutcome, originalLength, minimizedLength, deletionMinimal: true,
-      attempts: attempts.length, acceptedDeletions: attempts.filter(item => item.accepted === true).length,
-      dependencySkips: attempts.filter(item => item.reason === 'dependency_required').length, confirmations: rawConfirmations.length,
-      elapsedMs: integer(minResult.elapsedMs, 3_600_000), modelCalls: integer(minResult.modelCalls, 100_000), planId: minPlan.id, actions: minPlan.actions,
-    };
-    const generated = object(minResult.generated, 'missing_generated_regression');
-    if (generated.path !== 'generated-tests/removed-member-write.spec.ts' || typeof generated.sha256 !== 'string' || !HASH.test(generated.sha256)) fail('invalid_generated_regression');
-    projection.regression = { path: generated.path as string, sha256: generated.sha256 as string, command: 'npm run test:generated', seededCommand: 'HOUND_FIXTURE_MODE=stale-write npm run test:generated' };
-  }
+  return input.minimization ? attachMinimizationProjection(projection, input.minimization) : projection;
+}
+
+export function attachMinimizationProjection(source: ReportProjection, input: ReportMinimizationInput): ReportProjection {
+  const projection = structuredClone(source);
+  const sourcePlanId = projection.exploration.planId;
+  if (!projection.finding.confirmed || !sourcePlanId || projection.minimization || projection.regression) fail('minimization_without_finding');
+  const minConfig = object(input.config); const minResult = object(input.result);
+  if (minConfig.version !== 1 || minResult.version !== 1 || minConfig.sourceRunId !== projection.runId || minConfig.sourcePlanId !== sourcePlanId) fail('inconsistent_minimization_record');
+  const minOutcome = enumValue(minResult.outcome, ['minimized', 'unchanged'] as const);
+  if (minResult.deletionMinimal !== true || !Array.isArray(minResult.attempts) || !Array.isArray(minResult.confirmations) ||
+      minResult.confirmations.length < 1 || minResult.confirmations.length > 5 ||
+      minResult.confirmations.some(item => object(item).outcome !== 'candidate_only_violation')) fail('unconfirmed_minimization_record');
+  const minPlan = actions(input.plan);
+  const rawAttempts = minResult.attempts as unknown[]; const rawConfirmations = minResult.confirmations as unknown[];
+  const attempts = rawAttempts.map(item => object(item));
+  const originalLength = integer(minResult.originalLength, 120); const minimizedLength = integer(minResult.minimizedLength, 120);
+  if (originalLength !== projection.exploration.originalActions.length || minimizedLength !== minPlan.actions.length ||
+      minPlan.probeActor !== projection.finding.actor || minPlan.probeResource !== projection.finding.resource) fail('inconsistent_minimization_record');
+  projection.minimization = {
+    outcome: minOutcome, originalLength, minimizedLength, deletionMinimal: true,
+    attempts: attempts.length, acceptedDeletions: attempts.filter(item => item.accepted === true).length,
+    dependencySkips: attempts.filter(item => item.reason === 'dependency_required').length, confirmations: rawConfirmations.length,
+    elapsedMs: integer(minResult.elapsedMs, 3_600_000), modelCalls: integer(minResult.modelCalls, 100_000), planId: minPlan.id, actions: minPlan.actions,
+  };
+  const generated = object(minResult.generated, 'missing_generated_regression');
+  if (generated.path !== 'generated-tests/removed-member-write.spec.ts' || typeof generated.sha256 !== 'string' || !HASH.test(generated.sha256)) fail('invalid_generated_regression');
+  projection.regression = { path: generated.path as string, sha256: generated.sha256 as string, command: 'npm run test:generated', seededCommand: 'HOUND_FIXTURE_MODE=stale-write npm run test:generated' };
   return projection;
 }
 

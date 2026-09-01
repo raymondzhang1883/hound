@@ -197,6 +197,38 @@ type artifact struct {
 	storageKey  string
 }
 
+type planMetadata struct {
+	ID            string
+	ProbeActor    string
+	ProbeResource string
+	Steps         int
+}
+
+type minimizationPublication struct {
+	Version      int    `json:"version"`
+	SourcePlanID string `json:"sourcePlanId"`
+	Minimization struct {
+		Outcome           string         `json:"outcome"`
+		OriginalLength    int            `json:"originalLength"`
+		MinimizedLength   int            `json:"minimizedLength"`
+		DeletionMinimal   bool           `json:"deletionMinimal"`
+		Attempts          int            `json:"attempts"`
+		AcceptedDeletions int            `json:"acceptedDeletions"`
+		DependencySkips   int            `json:"dependencySkips"`
+		Confirmations     int            `json:"confirmations"`
+		ElapsedMS         int            `json:"elapsedMs"`
+		ModelCalls        int            `json:"modelCalls"`
+		PlanID            string         `json:"planId"`
+		Actions           []reportAction `json:"actions"`
+	} `json:"minimization"`
+	Regression struct {
+		Path          string `json:"path"`
+		SHA256        string `json:"sha256"`
+		Command       string `json:"command"`
+		SeededCommand string `json:"seededCommand"`
+	} `json:"regression"`
+}
+
 func envConfig() (config, error) {
 	c := config{listen: os.Getenv("HOUND_LISTEN_ADDR"), databaseURL: os.Getenv("HOUND_DATABASE_URL"), workerKey: os.Getenv("HOUND_WORKER_KEY"), artifactDir: os.Getenv("HOUND_ARTIFACT_DIR"), leaseDuration: 30 * time.Second}
 	if c.listen == "" {
@@ -693,6 +725,142 @@ func (s *store) attachArtifact(ctx context.Context, jobID, token string, epoch i
 	return item, tx.Commit(ctx)
 }
 
+func (s *store) attachDerivedArtifact(ctx context.Context, runID, kind, contentType, hash string, size int, metadata planMetadata, storageKey string) (artifact, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return artifact{}, err
+	}
+	defer tx.Rollback(ctx)
+	var status, sourcePlanID, actor, resource string
+	var confirmed bool
+	err = tx.QueryRow(ctx, `SELECT r.status,(rr.projection#>>'{finding,confirmed}')::boolean,rr.projection#>>'{exploration,planId}',rr.projection#>>'{finding,actor}',rr.projection#>>'{finding,resource}'
+		FROM runs r JOIN run_results rr ON rr.run_id=r.id WHERE r.id=$1 FOR UPDATE OF r`, runID).Scan(&status, &confirmed, &sourcePlanID, &actor, &resource)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return artifact{}, errNotFound
+	}
+	if err != nil {
+		return artifact{}, err
+	}
+	if status != "completed" || !confirmed || !hashPattern.MatchString(sourcePlanID) || metadata.ProbeActor != actor || metadata.ProbeResource != resource {
+		return artifact{}, errConflict
+	}
+	var existing artifact
+	err = tx.QueryRow(ctx, `SELECT id,run_id,kind,content_type,sha256,size_bytes,logical_id,created_at,storage_key FROM run_artifacts WHERE run_id=$1 AND kind=$2`, runID, kind).Scan(
+		&existing.ID, &existing.RunID, &existing.Kind, &existing.ContentType, &existing.SHA256, &existing.SizeBytes, &existing.LogicalID, &existing.CreatedAt, &existing.storageKey)
+	if err == nil {
+		if existing.SHA256 != hash || existing.SizeBytes != size || value(existing.LogicalID) != metadata.ID || existing.ContentType != contentType {
+			return artifact{}, errConflict
+		}
+		return existing, tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return artifact{}, err
+	}
+	id, err := randomID()
+	if err != nil {
+		return artifact{}, err
+	}
+	item := artifact{ID: id, RunID: runID, Kind: kind, ContentType: contentType, SHA256: hash, SizeBytes: size, LogicalID: &metadata.ID, CreatedAt: time.Now().UTC(), storageKey: storageKey}
+	err = tx.QueryRow(ctx, `INSERT INTO run_artifacts(id,run_id,job_id,attempt,kind,content_type,sha256,size_bytes,logical_id,storage_key) VALUES($1,$2,NULL,NULL,$3,$4,$5,$6,$7,$8)
+		RETURNING created_at`, item.ID, runID, kind, contentType, hash, size, metadata.ID, storageKey).Scan(&item.CreatedAt)
+	if err != nil {
+		return artifact{}, err
+	}
+	return item, tx.Commit(ctx)
+}
+
+func validMinimization(data []byte) (minimizationPublication, error) {
+	var value minimizationPublication
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&value); err != nil {
+		return value, errInvalid
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return value, errInvalid
+	}
+	min := value.Minimization
+	regression := value.Regression
+	if value.Version != 1 || !hashPattern.MatchString(value.SourcePlanID) || min.Outcome != "minimized" && min.Outcome != "unchanged" || !min.DeletionMinimal ||
+		min.OriginalLength < 1 || min.OriginalLength > 120 || min.MinimizedLength < 1 || min.MinimizedLength > min.OriginalLength || len(min.Actions) != min.MinimizedLength ||
+		min.Attempts < 0 || min.Attempts > 80 || min.AcceptedDeletions < 0 || min.AcceptedDeletions > min.Attempts || min.DependencySkips < 0 || min.DependencySkips > min.Attempts ||
+		min.Confirmations < 1 || min.Confirmations > 5 || min.ElapsedMS < 0 || min.ElapsedMS > 3600000 || min.ModelCalls != 0 || !hashPattern.MatchString(min.PlanID) ||
+		regression.Path != "generated-tests/removed-member-write.spec.ts" || !hashPattern.MatchString(regression.SHA256) || regression.Command != "npm run test:generated" ||
+		regression.SeededCommand != "HOUND_FIXTURE_MODE=stale-write npm run test:generated" {
+		return value, errInvalid
+	}
+	for index, action := range min.Actions {
+		if action.Index != index || action.Actor != "alice" && action.Actor != "bob" || !eventTypePattern.MatchString(action.Kind) || !bounded(action.Description, 160) || action.Probe != (index == len(min.Actions)-1) {
+			return value, errInvalid
+		}
+	}
+	return value, nil
+}
+
+func (s *store) putMinimization(ctx context.Context, runID string, data []byte, hash string) error {
+	publication, err := validMinimization(data)
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var status, outcome, sourcePlanID, actor, resource string
+	var confirmed bool
+	var originalLength int
+	err = tx.QueryRow(ctx, `SELECT r.status,rr.outcome,(rr.projection#>>'{finding,confirmed}')::boolean,rr.projection#>>'{exploration,planId}',
+		rr.projection#>>'{finding,actor}',rr.projection#>>'{finding,resource}',jsonb_array_length(rr.projection#>'{exploration,originalActions}')
+		FROM runs r JOIN run_results rr ON rr.run_id=r.id WHERE r.id=$1 FOR UPDATE OF r`, runID).Scan(&status, &outcome, &confirmed, &sourcePlanID, &actor, &resource, &originalLength)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if status != "completed" || outcome != "candidate_only_violation" || !confirmed || publication.SourcePlanID != sourcePlanID || publication.Minimization.OriginalLength != originalLength {
+		return errConflict
+	}
+	var storageKey string
+	err = tx.QueryRow(ctx, `SELECT storage_key FROM run_artifacts WHERE run_id=$1 AND kind='minimized_plan' AND logical_id=$2`, runID, publication.Minimization.PlanID).Scan(&storageKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errConflict
+	}
+	if err != nil {
+		return err
+	}
+	planData, err := os.ReadFile(filepath.Join(s.artifactDir, filepath.FromSlash(storageKey)))
+	if err != nil {
+		return err
+	}
+	metadata, err := planMetadataOf(planData)
+	if err != nil || metadata.ID != publication.Minimization.PlanID || metadata.Steps != publication.Minimization.MinimizedLength || metadata.ProbeActor != actor || metadata.ProbeResource != resource {
+		return errConflict
+	}
+	var existingHash string
+	err = tx.QueryRow(ctx, `SELECT projection_sha256 FROM run_minimizations WHERE run_id=$1`, runID).Scan(&existingHash)
+	if err == nil {
+		if existingHash != hash {
+			return errConflict
+		}
+		return tx.Commit(ctx)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	projection, err := json.Marshal(map[string]any{"minimization": publication.Minimization, "regression": publication.Regression})
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO run_minimizations(run_id,source_plan_id,minimized_plan_id,projection,projection_sha256,size_bytes) VALUES($1,$2,$3,$4,$5,$6)`,
+		runID, publication.SourcePlanID, publication.Minimization.PlanID, string(projection), hash, len(data))
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *store) putResult(ctx context.Context, jobID, token string, epoch int64, data []byte, hash string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -744,7 +912,8 @@ func (s *store) putResult(ctx context.Context, jobID, token string, epoch int64,
 
 func (s *store) result(ctx context.Context, runID string) (json.RawMessage, error) {
 	var data []byte
-	err := s.pool.QueryRow(ctx, `SELECT rr.projection::text FROM run_results rr JOIN runs r ON r.id=rr.run_id WHERE rr.run_id=$1 AND r.status='completed'`, runID).Scan(&data)
+	err := s.pool.QueryRow(ctx, `SELECT (rr.projection || COALESCE(rm.projection,'{}'::jsonb))::text FROM run_results rr JOIN runs r ON r.id=rr.run_id
+		LEFT JOIN run_minimizations rm ON rm.run_id=rr.run_id WHERE rr.run_id=$1 AND r.status='completed'`, runID).Scan(&data)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if _, runErr := s.getRun(ctx, runID); runErr != nil {
 			return nil, runErr
@@ -860,7 +1029,7 @@ func payload(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, strin
 	return data, hash, nil
 }
 
-func planLogicalID(data []byte) (string, error) {
+func planMetadataOf(data []byte) (planMetadata, error) {
 	var plan struct {
 		Version       int               `json:"version"`
 		ID            string            `json:"id"`
@@ -871,13 +1040,13 @@ func planLogicalID(data []byte) (string, error) {
 	decoder := json.NewDecoder(strings.NewReader(string(data)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&plan); err != nil {
-		return "", errInvalid
+		return planMetadata{}, errInvalid
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) || plan.Version != 1 || !hashPattern.MatchString(plan.ID) ||
 		plan.ProbeActor != "alice" && plan.ProbeActor != "bob" || !eventIDPattern.MatchString(plan.ProbeResource) || len(plan.Steps) < 1 || len(plan.Steps) > 120 {
-		return "", errInvalid
+		return planMetadata{}, errInvalid
 	}
-	return plan.ID, nil
+	return planMetadata{ID: plan.ID, ProbeActor: plan.ProbeActor, ProbeResource: plan.ProbeResource, Steps: len(plan.Steps)}, nil
 }
 func respond(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -986,7 +1155,7 @@ func (s *server) routes() http.Handler {
 		_, _ = w.Write(data)
 	})
 	mux.HandleFunc("GET /v1/runs/{runID}/artifacts/{kind}", func(w http.ResponseWriter, r *http.Request) {
-		if r.PathValue("kind") != "replay_plan" {
+		if r.PathValue("kind") != "replay_plan" && r.PathValue("kind") != "minimized_plan" {
 			problem(w, 404, "not_found")
 			return
 		}
@@ -1014,6 +1183,53 @@ func (s *server) routes() http.Handler {
 		w.Header().Set("ETag", `"`+item.SHA256+`"`)
 		w.Header().Set("X-Hound-Artifact-ID", item.ID)
 		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("PUT /v1/runs/{runID}/artifacts/{kind}", func(w http.ResponseWriter, r *http.Request) {
+		if !s.worker(r) {
+			problem(w, 401, "worker_unauthorized")
+			return
+		}
+		if r.PathValue("kind") != "minimized_plan" {
+			problem(w, 400, "invalid_artifact")
+			return
+		}
+		data, hash, err := payload(w, r, 1<<20)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		metadata, err := planMetadataOf(data)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		storageKey, err := s.store.putBlob(data, hash)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		item, err := s.store.attachDerivedArtifact(r.Context(), r.PathValue("runID"), "minimized_plan", "application/json", hash, len(data), metadata, storageKey)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		respond(w, 200, item)
+	})
+	mux.HandleFunc("PUT /v1/runs/{runID}/minimization", func(w http.ResponseWriter, r *http.Request) {
+		if !s.worker(r) {
+			problem(w, 401, "worker_unauthorized")
+			return
+		}
+		data, hash, err := payload(w, r, 128<<10)
+		if err != nil {
+			s.fail(w, err)
+			return
+		}
+		if err = s.store.putMinimization(r.Context(), r.PathValue("runID"), data, hash); err != nil {
+			s.fail(w, err)
+			return
+		}
+		respond(w, 200, map[string]string{"status": "stored", "sha256": hash})
 	})
 	mux.HandleFunc("POST /v1/jobs/lease", func(w http.ResponseWriter, r *http.Request) {
 		if !s.worker(r) {
@@ -1093,7 +1309,7 @@ func (s *server) routes() http.Handler {
 			s.fail(w, err)
 			return
 		}
-		logicalID, err := planLogicalID(data)
+		metadata, err := planMetadataOf(data)
 		if err != nil {
 			s.fail(w, err)
 			return
@@ -1108,7 +1324,7 @@ func (s *server) routes() http.Handler {
 			s.fail(w, err)
 			return
 		}
-		item, err := s.store.attachArtifact(r.Context(), r.PathValue("jobID"), token, e, "replay_plan", "application/json", hash, len(data), logicalID, storageKey)
+		item, err := s.store.attachArtifact(r.Context(), r.PathValue("jobID"), token, e, "replay_plan", "application/json", hash, len(data), metadata.ID, storageKey)
 		if err != nil {
 			s.fail(w, err)
 			return
