@@ -8,7 +8,7 @@ The included Fieldnotes candidate is intentionally vulnerable. A report that onl
 
 ## Reporting a vulnerability
 
-Please report vulnerabilities in Hound itself privately to **raymond.zhang@utexas.edu** with the subject `Hound security report`. Include the affected revision, impact, reproduction steps, and any suggested mitigation. Do not include real credentials or third-party data.
+Please use the repository's **Security** tab and select **Report a vulnerability** to open a private GitHub security advisory. Include the affected revision, impact, reproduction steps, and any suggested mitigation. Do not include real credentials or third-party data.
 
 Please avoid filing a public issue for an unreleased vulnerability. You can expect an initial acknowledgment within seven days. This is a personal project, so remediation timelines depend on severity and maintainer availability.
 

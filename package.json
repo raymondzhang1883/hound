@@ -2,6 +2,7 @@
   "name": "hound",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "description": "CLI-first authorization regression testing with bounded browser exploration and deterministic paired replay",
   "type": "module",
   "repository": {

@@ -183,3 +183,7 @@ generated-tests/           Exported model-free Playwright regression
 ```
 
 Start with the runtime contract, durable minimization decision, and CLI/report guide.
+
+## License
+
+Hound is available under the [MIT License](LICENSE).
