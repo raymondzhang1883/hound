@@ -43,8 +43,6 @@ The demo prints its durable run ID and report path. Inspect the same result from
 ./hound test-generated
 ```
 
-You can also review the tracked example finding report, which is a sanitized static export from the credential-free demo.
-
 ## What is technically interesting
 
 - **Agent authority is narrow.** The policy chooses one validated click, fill, select, observe, or known-route navigation from a bounded DOM observation. It cannot run shell commands, issue arbitrary requests, execute browser code, or choose a target URL.
@@ -73,7 +71,7 @@ flowchart TD
     CLI --> REPORT[Static HTML export]
 ```
 
-The versioned application adapter contains Fieldnotes startup, fictional actor credentials, authenticated authoritative inspection, reset semantics, and cleanup. Core worker and minimizer orchestration no longer imports fixture startup directly. A second adapter is a future generalization experiment, not a current compatibility claim.
+The versioned application-adapter interface covers Fieldnotes startup, fictional actor credentials, authenticated authoritative inspection, reset semantics, and cleanup. Core worker and minimizer orchestration does not import fixture startup directly. A second adapter is a future generalization experiment, not a current compatibility claim.
 
 ## Finding lifecycle
 
@@ -97,7 +95,7 @@ Hound keeps three kinds of evidence separate:
 | Simulated-provider demo | Complete integration through real browsers and the provider wire parser | Autonomous discovery or detection rate |
 | Live pilots | Actual model calls, cost, failure modes, positive runs, and negative controls | A statistically useful benchmark |
 
-The demo's authored sequence is explicit in `services/runtime/src/demo-policy.ts` and is shared by positive and both-correct browser integrations. Measured live-pilot records and their limits are documented in agent setup and results and evaluation. A nondetection is never labeled a security pass.
+The demo's authored sequence is explicit in `services/runtime/src/demo-policy.ts` and is shared by positive and both-correct browser integrations. A nondetection is never labeled a security pass.
 
 ## Use the CLI
 
@@ -181,8 +179,6 @@ services/control-plane/    Go lifecycle, result, event, and artifact API
 deploy/local/              Digest-pinned loopback Docker Compose stack
 generated-tests/           Exported model-free Playwright regression
 ```
-
-Start with the architecture overview, runtime contract, application-adapter contract, durable minimization decision, and CLI/report guide.
 
 ## License
 
