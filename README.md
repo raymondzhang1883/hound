@@ -182,7 +182,7 @@ deploy/local/              Digest-pinned loopback Docker Compose stack
 generated-tests/           Exported model-free Playwright regression
 ```
 
-Start with the runtime contract, durable minimization decision, and CLI/report guide.
+Start with the architecture overview, runtime contract, application-adapter contract, durable minimization decision, and CLI/report guide.
 
 ## License
 
